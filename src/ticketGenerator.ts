@@ -16,7 +16,7 @@ export class TicketGenerator {
     private templatePath: string;
 
     constructor() {
-        this.templatePath = path.join(__dirname, '..', 'assets', 'Black Minimalist Music Festival Ticket-2.png');
+        this.templatePath = path.join(__dirname, '..', 'assets', 'Black Minimalist Music Festival Ticket-2.png.png');
     }
 
     private async downloadImage(url: string): Promise<Buffer> {
@@ -38,7 +38,7 @@ export class TicketGenerator {
         try {
             // Load the template
             if (!fs.existsSync(this.templatePath)) {
-                throw new Error('Template not found. Please ensure Black Minimalist Music Festival Ticket-2.png exists in assets folder.');
+                throw new Error('Template not found. Please ensure Black Minimalist Music Festival Ticket-2.png.png exists in assets folder.');
             }
 
             const template = await loadImage(this.templatePath);
