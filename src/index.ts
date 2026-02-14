@@ -279,8 +279,14 @@ class LotteryBot {
             try {
                 const dmAttachment = new AttachmentBuilder(ticketBuffer, { name: 'ticket.png' });
                 const now = new Date();
-                const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                const dateStr = now.toLocaleDateString('en-US', { 
+                    timeZone: 'Asia/Kolkata',
+                    month: 'short', day: 'numeric', year: 'numeric' 
+                });
+                const timeStr = now.toLocaleTimeString('en-US', { 
+                    timeZone: 'Asia/Kolkata',
+                    hour: '2-digit', minute: '2-digit', hour12: true 
+                });
 
                 await message.author.send({
                     content: `Ticket ID: #${ticketNumber}\nUsername: ${message.author.username}\nClaimed: ${dateStr} at ${timeStr}`,
