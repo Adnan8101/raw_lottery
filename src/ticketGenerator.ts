@@ -16,7 +16,7 @@ export class TicketGenerator {
     private templatePath: string;
 
     constructor() {
-        this.templatePath = path.join(__dirname, '..', 'assets', 'Black Minimalist Music Festival Ticket-2.png.png');
+        this.templatePath = path.join(__dirname, '..', 'assets', 'Black Minimalist Music Festival Ticket.png');
     }
 
     private async downloadImage(url: string): Promise<Buffer> {
@@ -38,7 +38,7 @@ export class TicketGenerator {
         try {
             // Load the template
             if (!fs.existsSync(this.templatePath)) {
-                throw new Error('Template not found. Please ensure Black Minimalist Music Festival Ticket-2.png.png exists in assets folder.');
+                throw new Error('Template not found. Please ensure Black Minimalist Music Festival Ticket.png exists in assets folder.');
             }
 
             const template = await loadImage(this.templatePath);
@@ -54,15 +54,17 @@ export class TicketGenerator {
             
             // ============================================
             // LAYOUT CONSTANTS
-            // Template: 3000 x 971
-            // Right beige panel: X=2545 to X=2999 (454px wide)
-            // Panel center X = 2772, full height 0-970
+            // Template: 4000 x 1294
+            // Right beige panel: X=3393 to X=3999 (606px wide)
+            // Panel center X = 3696
+            // Panel is fully clean beige (#dcb189) from Y=0 to Y=1293
+            // Full usable height: 1293px
             // ============================================
-            const panelLeft = 2545;
-            const panelRight = 2999;
-            const panelCenterX = Math.round((panelLeft + panelRight) / 2); // 2772
-            const panelWidth = panelRight - panelLeft; // 454
-            const lineWidth = Math.round(panelWidth * 0.75); // ~340px for decorative lines
+            const panelLeft = 3393;
+            const panelRight = 3999;
+            const panelCenterX = Math.round((panelLeft + panelRight) / 2); // 3696
+            const panelWidth = panelRight - panelLeft; // 606
+            const lineWidth = Math.round(panelWidth * 0.72); // ~436px for decorative lines
             const halfLine = Math.round(lineWidth / 2);
             
             const darkColor = '#3b2c1e';       // Dark warm brown
@@ -72,16 +74,16 @@ export class TicketGenerator {
             
             // ============================================
             // AVATAR - CIRCULAR, UPPER AREA OF PANEL
-            // Center at Y=170, radius=120 → spans Y=50 to Y=290
+            // Center at Y=220, radius=140 → spans Y=80 to Y=360
             // ============================================
-            const avatarCenterY = 170;
-            const avatarRadius = 120;
+            const avatarCenterY = 220;
+            const avatarRadius = 140;
             
             // Soft shadow behind avatar
             ctx.save();
             ctx.shadowColor = 'rgba(0, 0, 0, 0.25)';
-            ctx.shadowBlur = 25;
-            ctx.shadowOffsetY = 6;
+            ctx.shadowBlur = 30;
+            ctx.shadowOffsetY = 8;
             ctx.beginPath();
             ctx.arc(panelCenterX, avatarCenterY, avatarRadius, 0, Math.PI * 2);
             ctx.fillStyle = '#000';
@@ -104,20 +106,20 @@ export class TicketGenerator {
 
             // Avatar border ring
             ctx.strokeStyle = darkColor;
-            ctx.lineWidth = 4;
+            ctx.lineWidth = 4.5;
             ctx.beginPath();
             ctx.arc(panelCenterX, avatarCenterY, avatarRadius + 3, 0, Math.PI * 2);
             ctx.stroke();
 
             // ============================================
-            // USERNAME - CENTERED BELOW AVATAR (Y ≈ 330)
+            // USERNAME - CENTERED BELOW AVATAR (Y ≈ 420)
             // ============================================
-            const nameY = 335;
+            const nameY = 420;
             
             // Truncate username if needed
-            const maxNameWidth = panelWidth - 80; // 374px max
+            const maxNameWidth = panelWidth - 80;
             let displayName = username.toUpperCase();
-            ctx.font = '38px "Montserrat Bold"';
+            ctx.font = '46px "Montserrat Bold"';
             while (ctx.measureText(displayName).width > maxNameWidth && displayName.length > 3) {
                 displayName = displayName.slice(0, -1);
             }
@@ -125,62 +127,62 @@ export class TicketGenerator {
             
             // Draw username
             ctx.fillStyle = darkColor;
-            ctx.font = '38px "Montserrat Bold"';
+            ctx.font = '46px "Montserrat Bold"';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'alphabetic';
             ctx.fillText(displayName, panelCenterX, nameY);
 
             // ============================================
-            // PARTICIPANT LABEL (Y ≈ 370)
+            // PARTICIPANT LABEL (Y ≈ 462)
             // ============================================
             ctx.fillStyle = subtleColor;
-            ctx.font = '15px "Montserrat SemiBold"';
+            ctx.font = '17px "Montserrat SemiBold"';
             ctx.textAlign = 'center';
-            this.drawSpacedText(ctx, 'PARTICIPANT', panelCenterX, nameY + 35, 8);
+            this.drawSpacedText(ctx, 'PARTICIPANT', panelCenterX, nameY + 42, 8);
             
             // ============================================
-            // SEPARATOR LINE (Y ≈ 415)
+            // SEPARATOR LINE (Y ≈ 510)
             // ============================================
-            this.drawDashedLine(ctx, panelCenterX - halfLine, 415, panelCenterX + halfLine, 415, darkColor, 1, [10, 5]);
+            this.drawDashedLine(ctx, panelCenterX - halfLine, 510, panelCenterX + halfLine, 510, darkColor, 1.5, [12, 6]);
 
             // ============================================
-            // TICKET NUMBER SECTION (Y ≈ 445 - 580)
+            // TICKET NUMBER SECTION (Y ≈ 550 - 720)
             // ============================================
             const ticketNumStr = `#${ticketNumber.toString().padStart(4, '0')}`;
             
             // "TICKET NO." label
             ctx.fillStyle = subtleColor;
-            ctx.font = '18px "Montserrat Medium"';
+            ctx.font = '20px "Montserrat Medium"';
             ctx.textAlign = 'center';
-            ctx.fillText('TICKET NO.', panelCenterX, 452);
+            ctx.fillText('TICKET NO.', panelCenterX, 560);
             
             // Large ticket number
             ctx.fillStyle = accentColor;
-            ctx.font = '72px "Montserrat Bold"';
+            ctx.font = '86px "Montserrat Bold"';
             ctx.textAlign = 'center';
-            ctx.fillText(ticketNumStr, panelCenterX, 530);
+            ctx.fillText(ticketNumStr, panelCenterX, 665);
             
             // Box around ticket number
             const numWidth = ctx.measureText(ticketNumStr).width;
-            const boxPad = 28;
+            const boxPad = 32;
             const boxX = panelCenterX - numWidth / 2 - boxPad;
-            const boxY = 470;
+            const boxY = 590;
             const boxW = numWidth + boxPad * 2;
-            const boxH = 75;
+            const boxH = 90;
             ctx.strokeStyle = darkColor;
             ctx.lineWidth = 2.5;
             ctx.strokeRect(boxX, boxY, boxW, boxH);
             
             // Corner accents
-            this.drawCornerAccents(ctx, boxX, boxY, boxW, boxH, darkColor, 14, 3.5);
+            this.drawCornerAccents(ctx, boxX, boxY, boxW, boxH, darkColor, 16, 4);
 
             // ============================================
-            // SEPARATOR LINE (Y ≈ 600)
+            // SEPARATOR LINE (Y ≈ 740)
             // ============================================
-            this.drawDashedLine(ctx, panelCenterX - halfLine, 600, panelCenterX + halfLine, 600, darkColor, 1, [10, 5]);
+            this.drawDashedLine(ctx, panelCenterX - halfLine, 740, panelCenterX + halfLine, 740, darkColor, 1.5, [12, 6]);
 
             // ============================================
-            // CLAIM DETAILS (Y ≈ 630 - 720)
+            // CLAIM DETAILS (Y ≈ 790 - 900)
             // ============================================
             const now = new Date();
             const dateStr = now.toLocaleDateString('en-US', { 
@@ -192,37 +194,37 @@ export class TicketGenerator {
             
             // "CLAIMED ON" label
             ctx.fillStyle = subtleColor;
-            ctx.font = '14px "Montserrat Medium"';
+            ctx.font = '16px "Montserrat Medium"';
             ctx.textAlign = 'center';
-            this.drawSpacedText(ctx, 'CLAIMED ON', panelCenterX, 640, 5);
+            this.drawSpacedText(ctx, 'CLAIMED ON', panelCenterX, 790, 6);
             
             // Date & Time
             ctx.fillStyle = darkColor;
-            ctx.font = '22px "Montserrat SemiBold"';
+            ctx.font = '26px "Montserrat SemiBold"';
             ctx.textAlign = 'center';
-            ctx.fillText(dateStr, panelCenterX, 678);
-            ctx.fillText(timeStr, panelCenterX, 710);
+            ctx.fillText(dateStr, panelCenterX, 840);
+            ctx.fillText(timeStr, panelCenterX, 878);
 
             // ============================================
-            // SEPARATOR LINE (Y ≈ 740)
+            // SEPARATOR LINE (Y ≈ 930)
             // ============================================
-            this.drawDashedLine(ctx, panelCenterX - halfLine, 745, panelCenterX + halfLine, 745, darkColor, 1, [10, 5]);
+            this.drawDashedLine(ctx, panelCenterX - halfLine, 930, panelCenterX + halfLine, 930, darkColor, 1.5, [12, 6]);
 
             // ============================================
-            // USER ID - VERIFICATION (Y ≈ 780)
+            // USER ID - VERIFICATION (Y ≈ 975)
             // ============================================
             ctx.fillStyle = faintColor;
-            ctx.font = '12px "Montserrat"';
+            ctx.font = '14px "Montserrat"';
             ctx.textAlign = 'center';
-            ctx.fillText(`ID: ${userId}`, panelCenterX, 780);
+            ctx.fillText(`ID: ${userId}`, panelCenterX, 975);
 
             // ============================================
-            // LOTTERY BRANDING - BOTTOM (Y ≈ 920)
+            // LOTTERY BRANDING - BOTTOM (Y ≈ 1240)
             // ============================================
             ctx.fillStyle = faintColor;
-            ctx.font = '13px "Montserrat Medium"';
+            ctx.font = '15px "Montserrat Medium"';
             ctx.textAlign = 'center';
-            this.drawSpacedText(ctx, '★ LOTTERY TICKET ★', panelCenterX, 930, 4);
+            this.drawSpacedText(ctx, '★ LOTTERY TICKET ★', panelCenterX, 1240, 5);
 
             // Return buffer directly (no file saved)
             return canvas.toBuffer('image/png');
