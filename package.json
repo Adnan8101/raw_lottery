@@ -1,0 +1,29 @@
+{
+  "name": "lottery-bot",
+  "version": "1.0.0",
+  "description": "Discord lottery bot with ticket system",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "node dist/index.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "create-template": "ts-node src/createTemplate.ts"
+  },
+  "keywords": ["discord", "bot", "lottery"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5",
+    "@napi-rs/canvas": "^0.1.56",
+    "axios": "^1.7.9",
+    "mongoose": "^8.8.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.7.2"
+  }
+}
