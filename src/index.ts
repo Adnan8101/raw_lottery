@@ -628,7 +628,16 @@ class LotteryBot {
                     // Keep the first ticket (earliest claimed), reassign others
                     for (let i = 1; i < tickets.length; i++) {
                         const oldTicket = tickets[i];
-                        const newTicketNumber = config.ticketCounter;
+                        
+                        // Find next available ticket number
+                        let newTicketNumber = config.ticketCounter;
+                        let ticketExists = await Participant.findOne({ ticketNumber: newTicketNumber });
+                        
+                        // Keep incrementing until we find an unused ticket number
+                        while (ticketExists) {
+                            newTicketNumber++;
+                            ticketExists = await Participant.findOne({ ticketNumber: newTicketNumber });
+                        }
                         
                         // Update the duplicate ticket with new number
                         await Participant.updateOne(
@@ -636,7 +645,15 @@ class LotteryBot {
                             { ticketNumber: newTicketNumber }
                         );
                         
-                        await LotteryConfig.updateOne({}, { $inc: { ticketCounter: 1 } });
+                        // Update counter to the next number after this one
+                        await LotteryConfig.updateOne({}, { ticketCounter: newTicketNumber + 1 });
+                        
+                        // Reload config for next iteration
+                        const updatedConfig = await LotteryConfig.findOne();
+                        if (updatedConfig) {
+                            config.ticketCounter = updatedConfig.ticketCounter;
+                        }
+                        
                         totalDuplicatesFixed++;
                         usersAffected++;
 
