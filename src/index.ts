@@ -753,7 +753,8 @@ class LotteryBot {
                             
                             // Try to notify the user in the channel
                             try {
-                                await message.channel.send(`⚠️ <@${user.id}> Your DMs are off! Please enable DMs and contact an admin to refresh your ticket.`);
+                                const textChannel = message.channel as TextChannel;
+                                await textChannel.send(`⚠️ <@${user.id}> Your DMs are off! Please enable DMs and contact an admin to refresh your ticket.`);
                             } catch (err) {
                                 console.error('Could not notify user in channel:', err);
                             }
