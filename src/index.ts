@@ -587,63 +587,88 @@ class LotteryBot {
     }
 
     private async handleRefreshLottery(message: Message): Promise<void> {
+        if (!this.isAdmin(message)) {
+            await message.reply('You need Administrator permission to use this command.');
+            return;
+        }
+
         try {
-            // Find all duplicate tickets for this user
-            const userTickets = await Participant.find({ userId: message.author.id });
-            
-            if (userTickets.length === 0) {
-                await message.reply('You have not claimed any tickets yet.');
-                return;
-            }
-
-            if (userTickets.length === 1) {
-                await message.reply('No duplicate tickets found. Your ticket is unique.');
-                return;
-            }
-
-            // User has multiple tickets - keep the first one, reassign others
             const config = await LotteryConfig.findOne();
             if (!config) {
                 await message.reply('Lottery is not configured.');
                 return;
             }
 
-            let newTicketsGiven = 0;
-            for (let i = 1; i < userTickets.length; i++) {
-                const oldTicket = userTickets[i];
-                const newTicketNumber = config.ticketCounter;
-                
-                // Update the duplicate ticket with new number
-                await Participant.updateOne(
-                    { _id: oldTicket._id },
-                    { ticketNumber: newTicketNumber }
-                );
-                
-                await LotteryConfig.updateOne({}, { $inc: { ticketCounter: 1 } });
-                newTicketsGiven++;
+            // Find ALL tickets and group by userId
+            const allTickets = await Participant.find().sort({ claimedAt: 1 });
+            
+            if (allTickets.length === 0) {
+                await message.reply('No tickets have been claimed yet.');
+                return;
+            }
 
-                // Generate new ticket image
-                const avatarUrl = message.author.displayAvatarURL({ extension: 'png', size: 256 });
-                const ticketBuffer = await this.ticketGenerator.generateTicket(
-                    message.author.id,
-                    message.author.username,
-                    avatarUrl,
-                    newTicketNumber
-                );
+            // Group tickets by userId
+            const userTicketsMap = new Map<string, typeof allTickets>();
+            for (const ticket of allTickets) {
+                if (!userTicketsMap.has(ticket.userId)) {
+                    userTicketsMap.set(ticket.userId, []);
+                }
+                userTicketsMap.get(ticket.userId)!.push(ticket);
+            }
 
-                // Send new ticket in DM
-                try {
-                    const dmAttachment = new AttachmentBuilder(ticketBuffer, { name: 'ticket.png' });
-                    await message.author.send({
-                        content: `🔄 Duplicate ticket detected! Your old ticket #${oldTicket.ticketNumber} has been replaced.\nNew Ticket: #${newTicketNumber}`,
-                        files: [dmAttachment]
-                    });
-                } catch (dmError) {
-                    console.error('Error sending DM:', dmError);
+            // Find users with duplicates
+            let totalDuplicatesFixed = 0;
+            let usersAffected = 0;
+
+            for (const [userId, tickets] of userTicketsMap.entries()) {
+                if (tickets.length > 1) {
+                    usersAffected++;
+                    
+                    // Keep the first ticket, reassign others
+                    for (let i = 1; i < tickets.length; i++) {
+                        const oldTicket = tickets[i];
+                        const newTicketNumber = config.ticketCounter;
+                        
+                        // Update the duplicate ticket with new number
+                        await Participant.updateOne(
+                            { _id: oldTicket._id },
+                            { ticketNumber: newTicketNumber }
+                        );
+                        
+                        await LotteryConfig.updateOne({}, { $inc: { ticketCounter: 1 } });
+                        totalDuplicatesFixed++;
+
+                        // Get user info
+                        const user = await this.client.users.fetch(userId);
+                        const avatarUrl = user.displayAvatarURL({ extension: 'png', size: 256 });
+                        
+                        // Generate new ticket image
+                        const ticketBuffer = await this.ticketGenerator.generateTicket(
+                            userId,
+                            user.username,
+                            avatarUrl,
+                            newTicketNumber
+                        );
+
+                        // Send new ticket in DM
+                        try {
+                            const dmAttachment = new AttachmentBuilder(ticketBuffer, { name: 'ticket.png' });
+                            await user.send({
+                                content: `🔄 **Duplicate Ticket Detected!**\n\nYour old ticket #${oldTicket.ticketNumber} has been replaced with a new unique ticket.\n\n**New Ticket Number:** #${newTicketNumber}`,
+                                files: [dmAttachment]
+                            });
+                        } catch (dmError) {
+                            console.error(`Error sending DM to ${user.username}:`, dmError);
+                        }
+                    }
                 }
             }
 
-            await message.reply(`✅ Found ${newTicketsGiven} duplicate ticket(s).\n🎟️ New unique ticket(s) sent to your DMs.`);
+            if (totalDuplicatesFixed === 0) {
+                await message.reply('✅ No duplicate tickets found. All tickets are unique.');
+            } else {
+                await message.reply(`✅ **Refresh Complete!**\n\n📊 **Results:**\n- Users affected: **${usersAffected}**\n- Duplicate tickets fixed: **${totalDuplicatesFixed}**\n- New tickets sent to affected users via DM`);
+            }
 
         } catch (error) {
             console.error('Error refreshing lottery:', error);
@@ -672,8 +697,8 @@ class LotteryBot {
             const allParticipants = await Participant.find().sort({ ticketNumber: 1 });
             
             // Pagination settings
-            const itemsPerPage = 20;
-            const totalPages = Math.ceil(allParticipants.length / itemsPerPage);
+            const itemsPerPage = 15;
+            const totalPages = Math.ceil(allParticipants.length / itemsPerPage) || 1;
             let currentPage = 0;
 
             const generateEmbed = (page: number) => {
@@ -682,48 +707,100 @@ class LotteryBot {
                 const pageParticipants = allParticipants.slice(start, end);
                 
                 const participantsList = pageParticipants.length > 0 
-                    ? pageParticipants.map(p => `<@${p.userId}> - Ticket #${p.ticketNumber}`).join('\n')
-                    : 'No participants yet';
+                    ? pageParticipants.map((p, idx) => `\`${String(start + idx + 1).padStart(3, ' ')}\` <@${p.userId}> → Ticket **#${p.ticketNumber}**`).join('\n')
+                    : '*No participants yet*';
 
                 return new EmbedBuilder()
-                    .setTitle('🎟️ Lottery Information')
-                    .setDescription(`**Status:** ${config.isActive ? '🟢 Active' : '🔴 Inactive'}`)
+                    .setTitle('🎟️ Lottery Dashboard')
+                    .setDescription(`**System Status:** ${config.isActive ? '🟢 **Active**' : '🔴 **Inactive**'}\n━━━━━━━━━━━━━━━━━━━━━━`)
                     .addFields(
-                        { name: '📊 Statistics', value: `Total Tickets Issued: **${ticketsIssued}**\nTotal Participants: **${totalParticipants}**\nTotal Winners: **${totalWinners}**`, inline: false },
-                        { name: '⚙️ Configuration', value: `Claim Channel: <#${config.claimChannel}>\nLog Channel: <#${config.logChannel}>`, inline: false },
-                        { name: `👥 Participants (Page ${page + 1}/${totalPages || 1})`, value: participantsList, inline: false }
+                        { 
+                            name: '📊 Statistics', 
+                            value: `\`\`\`\nTickets Issued : ${ticketsIssued}\nParticipants   : ${totalParticipants}\nWinners        : ${totalWinners}\`\`\``, 
+                            inline: true 
+                        },
+                        { 
+                            name: '⚙️ Configuration', 
+                            value: `\`\`\`\nClaim Channel\n\`\`\`<#${config.claimChannel}>\n\`\`\`\nLog Channel\n\`\`\`<#${config.logChannel}>`, 
+                            inline: true 
+                        },
+                        { 
+                            name: `👥 Participants List • Page ${page + 1} of ${totalPages}`, 
+                            value: participantsList, 
+                            inline: false 
+                        }
                     )
                     .setColor(config.isActive ? 0x57F287 : 0xED4245)
-                    .setFooter({ text: `Showing ${start + 1}-${Math.min(end, allParticipants.length)} of ${allParticipants.length}` })
+                    .setFooter({ text: `Showing ${start + 1}-${Math.min(end, allParticipants.length)} of ${allParticipants.length} participants` })
                     .setTimestamp();
             };
 
+            const generateButtons = (page: number) => {
+                const row = new ActionRowBuilder<ButtonBuilder>()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('first_page')
+                            .setLabel('⏮️ First')
+                            .setStyle(ButtonStyle.Secondary)
+                            .setDisabled(page === 0),
+                        new ButtonBuilder()
+                            .setCustomId('prev_page')
+                            .setLabel('◀️ Previous')
+                            .setStyle(ButtonStyle.Primary)
+                            .setDisabled(page === 0),
+                        new ButtonBuilder()
+                            .setCustomId('page_info')
+                            .setLabel(`${page + 1} / ${totalPages}`)
+                            .setStyle(ButtonStyle.Secondary)
+                            .setDisabled(true),
+                        new ButtonBuilder()
+                            .setCustomId('next_page')
+                            .setLabel('Next ▶️')
+                            .setStyle(ButtonStyle.Primary)
+                            .setDisabled(page >= totalPages - 1),
+                        new ButtonBuilder()
+                            .setCustomId('last_page')
+                            .setLabel('Last ⏭️')
+                            .setStyle(ButtonStyle.Secondary)
+                            .setDisabled(page >= totalPages - 1)
+                    );
+                return row;
+            };
+
             // Send initial message
-            const reply = await message.reply({ embeds: [generateEmbed(currentPage)] });
-
-            // Only add pagination buttons if there are multiple pages
+            const messageOptions: any = { embeds: [generateEmbed(currentPage)] };
             if (totalPages > 1) {
-                await reply.react('⬅️');
-                await reply.react('➡️');
+                messageOptions.components = [generateButtons(currentPage)];
+            }
+            
+            const reply = await message.reply(messageOptions);
 
-                const collector = reply.createReactionCollector({
-                    filter: (reaction, user) => ['⬅️', '➡️'].includes(reaction.emoji.name!) && user.id === message.author.id,
-                    time: 300000 // 5 minutes
+            // Only add button collector if there are multiple pages
+            if (totalPages > 1) {
+                const collector = reply.createMessageComponentCollector({
+                    filter: (interaction) => interaction.user.id === message.author.id,
+                    time: 600000 // 10 minutes
                 });
 
-                collector.on('collect', async (reaction, user) => {
-                    if (reaction.emoji.name === '➡️' && currentPage < totalPages - 1) {
+                collector.on('collect', async (interaction) => {
+                    if (interaction.customId === 'next_page' && currentPage < totalPages - 1) {
                         currentPage++;
-                    } else if (reaction.emoji.name === '⬅️' && currentPage > 0) {
+                    } else if (interaction.customId === 'prev_page' && currentPage > 0) {
                         currentPage--;
+                    } else if (interaction.customId === 'first_page') {
+                        currentPage = 0;
+                    } else if (interaction.customId === 'last_page') {
+                        currentPage = totalPages - 1;
                     }
 
-                    await reply.edit({ embeds: [generateEmbed(currentPage)] });
-                    await reaction.users.remove(user.id);
+                    await interaction.update({ 
+                        embeds: [generateEmbed(currentPage)],
+                        components: [generateButtons(currentPage)]
+                    });
                 });
 
                 collector.on('end', () => {
-                    reply.reactions.removeAll().catch(() => {});
+                    reply.edit({ components: [] }).catch(() => {});
                 });
             }
 
@@ -741,8 +818,7 @@ class LotteryBot {
             .setDescription('Here are all available commands')
             .addFields(
                 { name: '!help', value: 'Display this help message', inline: false },
-                { name: '!lottery', value: 'Claim your lottery ticket (must be in the claim channel)', inline: false },
-                { name: '!refresh-lottery', value: 'Check for duplicate tickets and get a new unique ticket', inline: false }
+                { name: '!lottery', value: 'Claim your lottery ticket (must be in the claim channel)', inline: false }
             )
             .setTimestamp();
 
@@ -752,7 +828,8 @@ class LotteryBot {
                 { name: '!setup-lottery', value: 'Set up the lottery system (claim and log channels)', inline: false },
                 { name: '!setlottery', value: 'Start the lottery (resets tickets to #1)', inline: false },
                 { name: '!endlottery', value: 'End the lottery (stops ticket distribution)', inline: false },
-                { name: '!lottery-info', value: 'Show detailed lottery statistics and information', inline: false },
+                { name: '!refresh-lottery', value: 'Check all users for duplicate tickets and reassign new unique tickets', inline: false },
+                { name: '!lottery-info', value: 'Show detailed lottery statistics with pagination', inline: false },
                 { name: '!lotterywinner <place>', value: 'Pick a random winner for a specific place (e.g., !lotterywinner 1)', inline: false },
                 { name: '!reroll <place>', value: 'Reroll the winner at a specific place (e.g., !reroll 1)', inline: false },
                 { name: '!resetlottery', value: 'Reset all lottery data (keeps channel settings)', inline: false },
