@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, ChannelType, Message, TextChannel, Guild, AttachmentBuilder, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ComponentType, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, ChannelType, Message, TextChannel, Guild, AttachmentBuilder, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ComponentType, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder } from 'discord.js';
 import dotenv from 'dotenv';
 import { Database } from './database';
 import { Participant, Winner, LotteryConfig } from './models';
@@ -75,36 +75,22 @@ class LotteryBot {
 
         if (!message.guild) return;
 
-        // Get all text channels
-        const textChannels = message.guild.channels.cache
-            .filter(channel => channel.type === ChannelType.GuildText)
-            .first(25); // Discord allows max 25 options
-
-        if (textChannels.length === 0) {
-            await message.reply('No text channels found in this server.');
-            return;
-        }
-
-        // Create select menu for claim channel
-        const claimSelect = new StringSelectMenuBuilder()
+        // Create channel select menu for claim channel (with search)
+        const claimSelect = new ChannelSelectMenuBuilder()
             .setCustomId('claim_channel_select')
-            .setPlaceholder('Select Claim Channel')
-            .addOptions(
-                textChannels.map(channel =>
-                    new StringSelectMenuOptionBuilder()
-                        .setLabel(`# ${channel.name}`)
-                        .setDescription(`ID: ${channel.id}`)
-                        .setValue(channel.id)
-                )
-            );
+            .setPlaceholder('🔍 Search and select Claim Channel')
+            .setChannelTypes(ChannelType.GuildText)
+            .setMinValues(1)
+            .setMaxValues(1);
 
-        const claimRow = new ActionRowBuilder<StringSelectMenuBuilder>()
+        const claimRow = new ActionRowBuilder<ChannelSelectMenuBuilder>()
             .addComponents(claimSelect);
 
         const setupEmbed = new EmbedBuilder()
-            .setTitle('Lottery Setup - Step 1/2')
-            .setDescription('Please select the **Claim Channel** where users can claim tickets')
-            .setFooter({ text: 'Select a channel from the dropdown below' })
+            .setTitle('🎟️ Lottery Setup - Step 1/2')
+            .setDescription('Please select the **Claim Channel** where users can claim tickets\n\n✨ Use the dropdown below to search and select')
+            .setColor(0x5865F2)
+            .setFooter({ text: 'You can search for channels by typing' })
             .setTimestamp();
 
         const reply = await message.reply({
@@ -116,33 +102,34 @@ class LotteryBot {
         try {
             const claimInteraction = await reply.awaitMessageComponent({
                 filter: i => i.user.id === message.author.id && i.customId === 'claim_channel_select',
-                componentType: ComponentType.StringSelect,
+                componentType: ComponentType.ChannelSelect,
                 time: 60000
             });
 
-            const claimChannelId = claimInteraction.values[0];
+            const claimChannelId = claimInteraction.channels.first()?.id;
+            if (!claimChannelId) {
+                await claimInteraction.update({ content: 'Invalid channel selection.', embeds: [], components: [] });
+                return;
+            }
+            
             await LotteryConfig.updateOne({}, { claimChannel: claimChannelId });
 
-            // Create select menu for log channel
-            const logSelect = new StringSelectMenuBuilder()
+            // Create channel select menu for log channel (with search)
+            const logSelect = new ChannelSelectMenuBuilder()
                 .setCustomId('log_channel_select')
-                .setPlaceholder('Select Log Channel')
-                .addOptions(
-                    textChannels.map(channel =>
-                        new StringSelectMenuOptionBuilder()
-                            .setLabel(`# ${channel.name}`)
-                            .setDescription(`ID: ${channel.id}`)
-                            .setValue(channel.id)
-                    )
-                );
+                .setPlaceholder('🔍 Search and select Log Channel')
+                .setChannelTypes(ChannelType.GuildText)
+                .setMinValues(1)
+                .setMaxValues(1);
 
-            const logRow = new ActionRowBuilder<StringSelectMenuBuilder>()
+            const logRow = new ActionRowBuilder<ChannelSelectMenuBuilder>()
                 .addComponents(logSelect);
 
             const logEmbed = new EmbedBuilder()
-                .setTitle('Lottery Setup - Step 2/2')
-                .setDescription(`Claim Channel: <#${claimChannelId}>\n\nNow select the **Log Channel** for lottery logs`)
-                .setFooter({ text: 'Select a channel from the dropdown below' })
+                .setTitle('🎟️ Lottery Setup - Step 2/2')
+                .setDescription(`✅ Claim Channel: <#${claimChannelId}>\n\nNow select the **Log Channel** for lottery logs\n\n✨ Use the dropdown below to search and select`)
+                .setColor(0x5865F2)
+                .setFooter({ text: 'You can search for channels by typing' })
                 .setTimestamp();
 
             await claimInteraction.update({
@@ -153,20 +140,25 @@ class LotteryBot {
             // Wait for log channel selection
             const logInteraction = await reply.awaitMessageComponent({
                 filter: i => i.user.id === message.author.id && i.customId === 'log_channel_select',
-                componentType: ComponentType.StringSelect,
+                componentType: ComponentType.ChannelSelect,
                 time: 60000
             });
 
-            const logChannelId = logInteraction.values[0];
+            const logChannelId = logInteraction.channels.first()?.id;
+            if (!logChannelId) {
+                await logInteraction.update({ content: 'Invalid channel selection.', embeds: [], components: [] });
+                return;
+            }
             await LotteryConfig.updateOne({}, { logChannel: logChannelId });
 
             const successEmbed = new EmbedBuilder()
-                .setTitle('Lottery Setup Complete')
+                .setTitle('✅ Lottery Setup Complete')
                 .addFields(
-                    { name: 'Claim Channel', value: `<#${claimChannelId}>`, inline: true },
-                    { name: 'Log Channel', value: `<#${logChannelId}>`, inline: true }
+                    { name: '🎟️ Claim Channel', value: `<#${claimChannelId}>`, inline: true },
+                    { name: '📝 Log Channel', value: `<#${logChannelId}>`, inline: true }
                 )
-                .setDescription('Use `!setlottery` to start the lottery')
+                .setDescription('🎲 Use `!setlottery` to start the lottery')
+                .setColor(0x57F287)
                 .setTimestamp();
 
             await logInteraction.update({
@@ -180,8 +172,9 @@ class LotteryBot {
 
         } catch (error) {
             const timeoutEmbed = new EmbedBuilder()
-                .setTitle('Setup Timeout')
+                .setTitle('⏱️ Setup Timeout')
                 .setDescription('Setup timed out. Please run `!setup-lottery` again.')
+                .setColor(0xED4245)
                 .setTimestamp();
 
             await reply.edit({
