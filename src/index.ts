@@ -4,10 +4,22 @@ import { Database } from './database';
 import { Participant, Winner, LotteryConfig } from './models';
 import { TicketGenerator } from './ticketGenerator';
 dotenv.config();
+
+// Queue item interface
+interface QueueItem {
+    message: Message;
+    resolve: () => void;
+}
+
 class LotteryBot {
     private client: Client;
     private ticketGenerator: TicketGenerator;
     private database: Database;
+    
+    // Queue system to prevent duplicate tickets
+    private ticketQueue: QueueItem[] = [];
+    private isProcessingQueue: boolean = false;
+    
     constructor() {
         this.client = new Client({
             intents: [
@@ -47,6 +59,37 @@ class LotteryBot {
 
     private isAdmin(message: Message): boolean {
         return message.member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
+    }
+
+    // Add ticket claim to queue and wait for processing
+    private async addToTicketQueue(message: Message): Promise<void> {
+        return new Promise((resolve) => {
+            this.ticketQueue.push({ message, resolve });
+            this.processTicketQueue();
+        });
+    }
+
+    // Process ticket queue one by one
+    private async processTicketQueue(): Promise<void> {
+        if (this.isProcessingQueue || this.ticketQueue.length === 0) {
+            return;
+        }
+
+        this.isProcessingQueue = true;
+
+        while (this.ticketQueue.length > 0) {
+            const item = this.ticketQueue.shift();
+            if (item) {
+                try {
+                    await this.processTicketClaim(item.message);
+                } catch (error) {
+                    console.error('Error processing ticket claim:', error);
+                }
+                item.resolve();
+            }
+        }
+
+        this.isProcessingQueue = false;
     }
 
     private async sendLog(guild: Guild, content: string | { embeds: EmbedBuilder[], files?: AttachmentBuilder[] }): Promise<void> {
@@ -234,13 +277,14 @@ class LotteryBot {
             return;
         }
 
+        // Check if already claimed BEFORE adding to queue
         const existingParticipant = await Participant.findOne({ userId: message.author.id });
         if (existingParticipant) {
             await message.reply('you have already claimed your ticket');
             return;
         }
 
-        // Test if user has DMs enabled BEFORE generating ticket
+        // Test if user has DMs enabled BEFORE adding to queue
         try {
             await message.author.send('🎟️ Verifying DM access...');
         } catch (dmError) {
@@ -248,10 +292,30 @@ class LotteryBot {
             return;
         }
 
-        const ticketNumber = config.ticketCounter;
-        const avatarUrl = message.author.displayAvatarURL({ extension: 'png', size: 256 });
+        // Add to queue for sequential processing
+        await this.addToTicketQueue(message);
+    }
 
+    // Process ticket claim - called from queue (one at a time)
+    private async processTicketClaim(message: Message): Promise<void> {
         try {
+            // Double-check if already claimed (in case user spammed)
+            const existingParticipant = await Participant.findOne({ userId: message.author.id });
+            if (existingParticipant) {
+                await message.reply('you have already claimed your ticket');
+                return;
+            }
+
+            // Get FRESH config for accurate ticket counter
+            const config = await LotteryConfig.findOne();
+            if (!config) {
+                await message.reply('Lottery is not configured.');
+                return;
+            }
+
+            const ticketNumber = config.ticketCounter;
+            const avatarUrl = message.author.displayAvatarURL({ extension: 'png', size: 256 });
+
             // Generate ticket image (returns Buffer, not saved to disk)
             const ticketBuffer = await this.ticketGenerator.generateTicket(
                 message.author.id,
@@ -269,6 +333,7 @@ class LotteryBot {
                 avatarUrl: avatarUrl
             });
 
+            // Increment counter IMMEDIATELY after creating participant
             await LotteryConfig.updateOne({}, { $inc: { ticketCounter: 1 } });
 
             const totalParticipants = await Participant.countDocuments();
