@@ -240,6 +240,14 @@ class LotteryBot {
             return;
         }
 
+        // Test if user has DMs enabled BEFORE generating ticket
+        try {
+            await message.author.send('🎟️ Verifying DM access...');
+        } catch (dmError) {
+            await message.reply(`⚠️ <@${message.author.id}> Your DMs are off! Please enable DMs and type \`!lottery\` again to claim your ticket.`);
+            return;
+        }
+
         const ticketNumber = config.ticketCounter;
         const avatarUrl = message.author.displayAvatarURL({ extension: 'png', size: 256 });
 
@@ -269,26 +277,21 @@ class LotteryBot {
             await message.reply(`ticket #${ticketNumber} sent in your dms`);
 
             // Send ticket to user's DM (plain image + text, no embed)
-            try {
-                const dmAttachment = new AttachmentBuilder(ticketBuffer, { name: 'ticket.png' });
-                const now = new Date();
-                const dateStr = now.toLocaleDateString('en-US', { 
-                    timeZone: 'Asia/Kolkata',
-                    month: 'short', day: 'numeric', year: 'numeric' 
-                });
-                const timeStr = now.toLocaleTimeString('en-US', { 
-                    timeZone: 'Asia/Kolkata',
-                    hour: '2-digit', minute: '2-digit', hour12: true 
-                });
+            const dmAttachment = new AttachmentBuilder(ticketBuffer, { name: 'ticket.png' });
+            const now = new Date();
+            const dateStr = now.toLocaleDateString('en-US', { 
+                timeZone: 'Asia/Kolkata',
+                month: 'short', day: 'numeric', year: 'numeric' 
+            });
+            const timeStr = now.toLocaleTimeString('en-US', { 
+                timeZone: 'Asia/Kolkata',
+                hour: '2-digit', minute: '2-digit', hour12: true 
+            });
 
-                await message.author.send({
-                    content: `Ticket ID: #${ticketNumber}\nUsername: ${message.author.username}\nClaimed: ${dateStr} at ${timeStr}`,
-                    files: [dmAttachment]
-                });
-            } catch (dmError) {
-                console.error('Error sending DM:', dmError);
-                await message.reply('Could not send ticket to your DMs. Please enable DMs from server members.');
-            }
+            await message.author.send({
+                content: `Ticket ID: #${ticketNumber}\nUsername: ${message.author.username}\nClaimed: ${dateStr} at ${timeStr}`,
+                files: [dmAttachment]
+            });
 
             // Send to logs
             if (message.guild) {
@@ -620,6 +623,7 @@ class LotteryBot {
             let totalDuplicatesFixed = 0;
             let usersAffected = 0;
             const affectedTicketNumbers: number[] = [];
+            const failedUsers: string[] = [];
 
             for (const [ticketNumber, tickets] of ticketNumberMap.entries()) {
                 if (tickets.length > 1) {
@@ -638,30 +642,12 @@ class LotteryBot {
                             newTicketNumber++;
                             ticketExists = await Participant.findOne({ ticketNumber: newTicketNumber });
                         }
-                        
-                        // Update the duplicate ticket with new number
-                        await Participant.updateOne(
-                            { _id: oldTicket._id },
-                            { ticketNumber: newTicketNumber }
-                        );
-                        
-                        // Update counter to the next number after this one
-                        await LotteryConfig.updateOne({}, { ticketCounter: newTicketNumber + 1 });
-                        
-                        // Reload config for next iteration
-                        const updatedConfig = await LotteryConfig.findOne();
-                        if (updatedConfig) {
-                            config.ticketCounter = updatedConfig.ticketCounter;
-                        }
-                        
-                        totalDuplicatesFixed++;
-                        usersAffected++;
 
                         // Get user info
                         const user = await this.client.users.fetch(oldTicket.userId);
                         const avatarUrl = user.displayAvatarURL({ extension: 'png', size: 256 });
                         
-                        // Generate new ticket image
+                        // Generate new ticket image FIRST
                         const ticketBuffer = await this.ticketGenerator.generateTicket(
                             oldTicket.userId,
                             user.username,
@@ -669,15 +655,43 @@ class LotteryBot {
                             newTicketNumber
                         );
 
-                        // Send new ticket in DM
+                        // Try to send DM BEFORE updating database
                         try {
                             const dmAttachment = new AttachmentBuilder(ticketBuffer, { name: 'ticket.png' });
                             await user.send({
                                 content: `🔄 **Duplicate Ticket Detected!**\n\nYour ticket #${ticketNumber} was a duplicate.\nYou have been assigned a new unique ticket.\n\n**New Ticket Number:** #${newTicketNumber}`,
                                 files: [dmAttachment]
                             });
-                        } catch (dmError) {
+
+                            // DM sent successfully - NOW update the database
+                            await Participant.updateOne(
+                                { _id: oldTicket._id },
+                                { ticketNumber: newTicketNumber }
+                            );
+                            
+                            // Update counter to the next number after this one
+                            await LotteryConfig.updateOne({}, { ticketCounter: newTicketNumber + 1 });
+                            
+                            // Reload config for next iteration
+                            const updatedConfig = await LotteryConfig.findOne();
+                            if (updatedConfig) {
+                                config.ticketCounter = updatedConfig.ticketCounter;
+                            }
+                            
+                            totalDuplicatesFixed++;
+                            usersAffected++;
+
+                        } catch (dmError: any) {
+                            // DM failed - don't update database, notify admin
                             console.error(`Error sending DM to ${user.username}:`, dmError);
+                            failedUsers.push(`${user.username} (${user.tag})`);
+                            
+                            // Try to notify the user in the channel
+                            try {
+                                await message.channel.send(`⚠️ <@${user.id}> Your DMs are off! Please enable DMs and contact an admin to refresh your ticket.`);
+                            } catch (err) {
+                                console.error('Could not notify user in channel:', err);
+                            }
                         }
                     }
                 }
@@ -686,12 +700,77 @@ class LotteryBot {
             if (totalDuplicatesFixed === 0) {
                 await message.reply('✅ No duplicate tickets found. All tickets are unique.');
             } else {
-                await message.reply(`✅ **Refresh Complete!**\n\n📊 **Results:**\n- Duplicate ticket numbers found: **${affectedTicketNumbers.join(', ')}**\n- Users affected: **${usersAffected}**\n- New tickets assigned: **${totalDuplicatesFixed}**\n- New tickets sent to affected users via DM`);
+                let resultMessage = `✅ **Refresh Complete!**\n\n📊 **Results:**\n- Duplicate ticket numbers found: **${affectedTicketNumbers.join(', ')}**\n- Users affected: **${usersAffected}**\n- New tickets assigned: **${totalDuplicatesFixed}**\n- New tickets sent to affected users via DM`;
+                
+                if (failedUsers.length > 0) {
+                    resultMessage += `\n\n⚠️ **Failed to send DM:**\n${failedUsers.map(u => `- ${u}`).join('\n')}\n\n*These users need to enable DMs. Admin should run !refresh-lottery again after they enable DMs.*`;
+                }
+                
+                await message.reply(resultMessage);
             }
 
         } catch (error) {
             console.error('Error refreshing lottery:', error);
             await message.reply('An error occurred while checking for duplicates.');
+        }
+    }
+
+    private async handleRemind(message: Message, reminderMessage: string): Promise<void> {
+        if (!this.isAdmin(message)) {
+            await message.reply('You need Administrator permission to use this command.');
+            return;
+        }
+
+        if (!reminderMessage || reminderMessage.trim() === '') {
+            await message.reply('Usage: `!remind <message>`\nExample: `!remind Draw happening in 1 hour!`');
+            return;
+        }
+
+        try {
+            // Get all participants
+            const participants = await Participant.find();
+            
+            if (participants.length === 0) {
+                await message.reply('No participants found.');
+                return;
+            }
+
+            let successCount = 0;
+            let failedCount = 0;
+            const failedUsers: string[] = [];
+
+            // Send DM to each participant
+            for (const participant of participants) {
+                try {
+                    const user = await this.client.users.fetch(participant.userId);
+                    await user.send(`📢 **Lottery Reminder**\n\n${reminderMessage}`);
+                    successCount++;
+                } catch (dmError) {
+                    console.error(`Failed to send DM to ${participant.userId}:`, dmError);
+                    failedCount++;
+                    try {
+                        const user = await this.client.users.fetch(participant.userId);
+                        failedUsers.push(user.username);
+                    } catch {
+                        failedUsers.push(`User ID: ${participant.userId}`);
+                    }
+                }
+            }
+
+            let resultMessage = `✅ **Reminder Sent!**\n\n📊 **Results:**\n- Total participants: **${participants.length}**\n- Successfully sent: **${successCount}**\n- Failed: **${failedCount}**`;
+            
+            if (failedUsers.length > 0) {
+                resultMessage += `\n\n⚠️ **Failed to send to:**\n${failedUsers.slice(0, 10).map(u => `- ${u}`).join('\n')}`;
+                if (failedUsers.length > 10) {
+                    resultMessage += `\n*...and ${failedUsers.length - 10} more*`;
+                }
+            }
+
+            await message.reply(resultMessage);
+
+        } catch (error) {
+            console.error('Error sending reminders:', error);
+            await message.reply('An error occurred while sending reminders.');
         }
     }
 
@@ -849,6 +928,7 @@ class LotteryBot {
                 { name: '!endlottery', value: 'End the lottery (stops ticket distribution)', inline: false },
                 { name: '!refresh-lottery', value: 'Check all users for duplicate tickets and reassign new unique tickets', inline: false },
                 { name: '!lottery-info', value: 'Show detailed lottery statistics with pagination', inline: false },
+                { name: '!remind <message>', value: 'Send a reminder message to all participants via DM', inline: false },
                 { name: '!lotterywinner <place>', value: 'Pick a random winner for a specific place (e.g., !lotterywinner 1)', inline: false },
                 { name: '!reroll <place>', value: 'Reroll the winner at a specific place (e.g., !reroll 1)', inline: false },
                 { name: '!resetlottery', value: 'Reset all lottery data (keeps channel settings)', inline: false },
@@ -877,6 +957,11 @@ class LotteryBot {
             await this.handleRefreshLottery(message);
         } else if (content === '!lottery-info') {
             await this.handleLotteryInfo(message);
+        } else if (args[0].toLowerCase() === '!remind' && args.length > 1) {
+            const reminderMessage = message.content.slice(8).trim();
+            await this.handleRemind(message, reminderMessage);
+        } else if (args[0].toLowerCase() === '!remind' && args.length === 1) {
+            await message.reply('Usage: `!remind <message>`\nExample: `!remind Draw happening in 1 hour!`');
         } else if (content === '!endlottery') {
             await this.handleEndLottery(message);
         } else if (args[0].toLowerCase() === '!lotterywinner' && args[1]) {
