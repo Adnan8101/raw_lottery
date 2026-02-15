@@ -599,7 +599,7 @@ class LotteryBot {
                 return;
             }
 
-            // Find ALL tickets and group by userId
+            // Find ALL tickets and group by ticket NUMBER (not userId)
             const allTickets = await Participant.find().sort({ claimedAt: 1 });
             
             if (allTickets.length === 0) {
@@ -607,24 +607,25 @@ class LotteryBot {
                 return;
             }
 
-            // Group tickets by userId
-            const userTicketsMap = new Map<string, typeof allTickets>();
+            // Group tickets by TICKET NUMBER to find duplicates
+            const ticketNumberMap = new Map<number, typeof allTickets>();
             for (const ticket of allTickets) {
-                if (!userTicketsMap.has(ticket.userId)) {
-                    userTicketsMap.set(ticket.userId, []);
+                if (!ticketNumberMap.has(ticket.ticketNumber)) {
+                    ticketNumberMap.set(ticket.ticketNumber, []);
                 }
-                userTicketsMap.get(ticket.userId)!.push(ticket);
+                ticketNumberMap.get(ticket.ticketNumber)!.push(ticket);
             }
 
-            // Find users with duplicates
+            // Find duplicate ticket numbers (where multiple users have the same number)
             let totalDuplicatesFixed = 0;
             let usersAffected = 0;
+            const affectedTicketNumbers: number[] = [];
 
-            for (const [userId, tickets] of userTicketsMap.entries()) {
+            for (const [ticketNumber, tickets] of ticketNumberMap.entries()) {
                 if (tickets.length > 1) {
-                    usersAffected++;
+                    affectedTicketNumbers.push(ticketNumber);
                     
-                    // Keep the first ticket, reassign others
+                    // Keep the first ticket (earliest claimed), reassign others
                     for (let i = 1; i < tickets.length; i++) {
                         const oldTicket = tickets[i];
                         const newTicketNumber = config.ticketCounter;
@@ -637,14 +638,15 @@ class LotteryBot {
                         
                         await LotteryConfig.updateOne({}, { $inc: { ticketCounter: 1 } });
                         totalDuplicatesFixed++;
+                        usersAffected++;
 
                         // Get user info
-                        const user = await this.client.users.fetch(userId);
+                        const user = await this.client.users.fetch(oldTicket.userId);
                         const avatarUrl = user.displayAvatarURL({ extension: 'png', size: 256 });
                         
                         // Generate new ticket image
                         const ticketBuffer = await this.ticketGenerator.generateTicket(
-                            userId,
+                            oldTicket.userId,
                             user.username,
                             avatarUrl,
                             newTicketNumber
@@ -654,7 +656,7 @@ class LotteryBot {
                         try {
                             const dmAttachment = new AttachmentBuilder(ticketBuffer, { name: 'ticket.png' });
                             await user.send({
-                                content: `🔄 **Duplicate Ticket Detected!**\n\nYour old ticket #${oldTicket.ticketNumber} has been replaced with a new unique ticket.\n\n**New Ticket Number:** #${newTicketNumber}`,
+                                content: `🔄 **Duplicate Ticket Detected!**\n\nYour ticket #${ticketNumber} was a duplicate.\nYou have been assigned a new unique ticket.\n\n**New Ticket Number:** #${newTicketNumber}`,
                                 files: [dmAttachment]
                             });
                         } catch (dmError) {
@@ -667,7 +669,7 @@ class LotteryBot {
             if (totalDuplicatesFixed === 0) {
                 await message.reply('✅ No duplicate tickets found. All tickets are unique.');
             } else {
-                await message.reply(`✅ **Refresh Complete!**\n\n📊 **Results:**\n- Users affected: **${usersAffected}**\n- Duplicate tickets fixed: **${totalDuplicatesFixed}**\n- New tickets sent to affected users via DM`);
+                await message.reply(`✅ **Refresh Complete!**\n\n📊 **Results:**\n- Duplicate ticket numbers found: **${affectedTicketNumbers.join(', ')}**\n- Users affected: **${usersAffected}**\n- New tickets assigned: **${totalDuplicatesFixed}**\n- New tickets sent to affected users via DM`);
             }
 
         } catch (error) {
