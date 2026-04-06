@@ -2,8 +2,6 @@ import { createCanvas, loadImage, GlobalFonts } from '@napi-rs/canvas';
 import path from 'path';
 import fs from 'fs';
 import axios from 'axios';
-
-// Register custom fonts
 const fontsDir = path.join(__dirname, '..', 'assets', 'fonts');
 if (fs.existsSync(fontsDir)) {
     GlobalFonts.registerFromPath(path.join(fontsDir, 'Montserrat-Bold.ttf'), 'Montserrat Bold');
@@ -30,11 +28,11 @@ export class TicketGenerator {
     }
 
     public async generateTicket(
-        userId: string,
+        _userId: string,
         username: string,
         avatarUrl: string,
         ticketNumber: number,
-        options: { serverName?: string; claimedAt?: Date; displayName?: string } = {}
+        _options: { serverName?: string; claimedAt?: Date; displayName?: string } = {}
     ): Promise<Buffer> {
         try {
             // Load the template
@@ -59,43 +57,26 @@ export class TicketGenerator {
             const pfpCenterX = Math.round(rightStripLeftX + rightStripWidth * 0.5);
             const pfpCenterY = Math.round(height * 0.19);
 
-            const nameSource = options.displayName?.trim() || username;
-            const surname = this.extractSurname(nameSource).toUpperCase();
-            const initials = this.extractSurname(username).slice(0, 1).toUpperCase() || 'U';
+            const initials = (username.trim().charAt(0) || 'U').toUpperCase();
 
             const avatarImage = await this.loadAvatarImage(avatarUrl);
             this.drawCircularAvatar(ctx, avatarImage, pfpCenterX, pfpCenterY, pfpRadius, initials);
 
-            ctx.fillStyle = '#000000';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'alphabetic';
-            ctx.font = '800 36px "Montserrat Bold"';
-            ctx.fillText('SURNAME', pfpCenterX, pfpCenterY + pfpRadius + 54);
-
-            this.drawFittedText(
+            this.drawFittedUsername(
                 ctx,
-                surname,
+                username,
                 pfpCenterX,
                 pfpCenterY + pfpRadius + 114,
-                pfpRadius * 3,
-                66,
-                34,
-                '800',
-                '"Montserrat Bold"',
-                '#000000'
+                pfpRadius * 3
             );
-
-            ctx.fillStyle = '#000000';
-            ctx.font = '700 30px "Montserrat SemiBold"';
-            ctx.fillText(`ID ${userId}`, pfpCenterX, pfpCenterY + pfpRadius + 168);
 
             const ticketFrameHeight = Math.round(height * 0.165);
             const ticketFrameTop = height - ticketFrameHeight - Math.round(height * 0.045);
-            const userIdY = pfpCenterY + pfpRadius + 168;
+            const usernameY = pfpCenterY + pfpRadius + 114;
             const pricePanelWidth = Math.round(rightStripWidth * 0.9);
             const pricePanelHeight = Math.round(height * 0.09);
             const pricePanelLeft = pfpCenterX - Math.round(pricePanelWidth / 2);
-            const minPricePanelTop = userIdY + Math.round(height * 0.045);
+            const minPricePanelTop = usernameY + Math.round(height * 0.045);
             const preferredPricePanelTop = ticketFrameTop - pricePanelHeight - Math.round(height * 0.07);
             const pricePanelTop = Math.max(minPricePanelTop, preferredPricePanelTop);
 
@@ -217,51 +198,47 @@ export class TicketGenerator {
         ctx.stroke();
     }
 
-    private extractSurname(value: string): string {
-        const cleaned = value.trim().replace(/\s+/g, ' ');
-        if (!cleaned) {
-            return 'USER';
-        }
-        const parts = cleaned.split(' ');
-        return parts[parts.length - 1];
-    }
-
-    private drawFittedText(
+    private drawFittedUsername(
         ctx: any,
-        text: string,
-        x: number,
-        y: number,
-        maxWidth: number,
-        startSize: number,
-        minSize: number,
-        weight: string,
-        family: string,
-        color: string
+        username: string,
+        centerX: number,
+        baselineY: number,
+        maxWidth: number
     ): void {
-        let fontSize = startSize;
-        let displayText = text;
+        const rawUsername = username.trim() || 'User';
 
-        ctx.fillStyle = color;
-        ctx.textAlign = 'center';
+        let usernameCore = rawUsername;
+        let displayUsername = usernameCore;
+        let usernameSize = 40;
 
-        while (fontSize >= minSize) {
-            ctx.font = `${weight} ${fontSize}px ${family}`;
-            if (ctx.measureText(displayText).width <= maxWidth) {
-                ctx.fillText(displayText, x, y);
-                return;
-            }
-            fontSize -= 1;
+        const minUsernameSize = 22;
+
+        const measureWidth = (nameText: string): number => {
+            ctx.font = `800 ${usernameSize}px "Montserrat Bold"`;
+            return ctx.measureText(nameText).width;
+        };
+
+        let measuredWidth = measureWidth(displayUsername);
+
+        while (measuredWidth > maxWidth && usernameSize > minUsernameSize) {
+            usernameSize -= 1;
+            measuredWidth = measureWidth(displayUsername);
         }
 
-        displayText = text;
-        ctx.font = `${weight} ${minSize}px ${family}`;
-        while (ctx.measureText(displayText).width > maxWidth && displayText.length > 3) {
-            displayText = displayText.slice(0, -1);
+        while (measuredWidth > maxWidth && usernameCore.length > 3) {
+            usernameCore = usernameCore.slice(0, -1);
+            displayUsername = `${usernameCore}…`;
+            measuredWidth = measureWidth(displayUsername);
         }
-        if (displayText !== text) {
-            displayText += '…';
-        }
-        ctx.fillText(displayText, x, y);
+
+        const startX = centerX - measuredWidth / 2;
+
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+
+        ctx.fillStyle = '#000000';
+        ctx.font = `800 ${usernameSize}px "Montserrat Bold"`;
+        ctx.fillText(displayUsername, startX, baselineY);
     }
 
 }
