@@ -3,7 +3,7 @@ import fs from 'fs';
 
 async function fullAnalysis() {
     // Load the correct image
-    const templatePath = '/Users/adnan/Downloads/raw_lottery/Black Minimalist Music Festival Ticket.png';
+    const templatePath = '/Users/adnan/Downloads/raw_lottery/Blue Modern Music Concert Ticket.png';
     const buf = fs.readFileSync(templatePath);
     const img = await loadImage(buf);
     const canvas = createCanvas(img.width, img.height);
@@ -11,7 +11,7 @@ async function fullAnalysis() {
     ctx.drawImage(img, 0, 0);
 
     console.log(`\n========================================`);
-    console.log(`IMAGE: Black Minimalist Music Festival Ticket.png`);
+    console.log(`IMAGE: Blue Modern Music Concert Ticket.png`);
     console.log(`Dimensions: ${img.width} x ${img.height}`);
     console.log(`========================================`);
 

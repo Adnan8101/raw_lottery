@@ -8,7 +8,9 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
     "watch": "tsc --watch",
-    "create-template": "ts-node src/createTemplate.ts"
+    "create-template": "ts-node src/createTemplate.ts",
+    "analyze-ticket": "ts-node analyze_ticket_layout.ts",
+    "test-ticket": "ts-node test_ticket.ts"
   },
   "keywords": ["discord", "bot", "lottery"],
   "author": "",

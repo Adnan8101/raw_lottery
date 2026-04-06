@@ -315,13 +315,19 @@ class LotteryBot {
 
             const ticketNumber = config.ticketCounter;
             const avatarUrl = message.author.displayAvatarURL({ extension: 'png', size: 256 });
+            const claimedAt = new Date();
 
             // Generate ticket image (returns Buffer, not saved to disk)
             const ticketBuffer = await this.ticketGenerator.generateTicket(
                 message.author.id,
                 message.author.username,
                 avatarUrl,
-                ticketNumber
+                ticketNumber,
+                {
+                    serverName: message.guild?.name,
+                    claimedAt,
+                    displayName: message.member?.displayName ?? message.author.globalName ?? message.author.username
+                }
             );
 
             // Save participant to database (no file path stored)
@@ -329,7 +335,7 @@ class LotteryBot {
                 userId: message.author.id,
                 username: message.author.username,
                 ticketNumber: ticketNumber,
-                claimedAt: new Date(),
+                claimedAt,
                 avatarUrl: avatarUrl
             });
 
@@ -343,12 +349,11 @@ class LotteryBot {
 
             // Send ticket to user's DM (plain image + text, no embed)
             const dmAttachment = new AttachmentBuilder(ticketBuffer, { name: 'ticket.png' });
-            const now = new Date();
-            const dateStr = now.toLocaleDateString('en-US', { 
+            const dateStr = claimedAt.toLocaleDateString('en-US', {
                 timeZone: 'Asia/Kolkata',
                 month: 'short', day: 'numeric', year: 'numeric' 
             });
-            const timeStr = now.toLocaleTimeString('en-US', { 
+            const timeStr = claimedAt.toLocaleTimeString('en-US', {
                 timeZone: 'Asia/Kolkata',
                 hour: '2-digit', minute: '2-digit', hour12: true 
             });

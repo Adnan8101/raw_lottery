@@ -1,7 +1,7 @@
 import { createCanvas, loadImage, GlobalFonts } from '@napi-rs/canvas';
-import axios from 'axios';
 import path from 'path';
 import fs from 'fs';
+import axios from 'axios';
 
 // Register custom fonts
 const fontsDir = path.join(__dirname, '..', 'assets', 'fonts');
@@ -16,16 +16,16 @@ export class TicketGenerator {
     private templatePath: string;
 
     constructor() {
-        this.templatePath = path.join(__dirname, '..', 'assets', 'Black Minimalist Music Festival Ticket.png');
-    }
+        const preferredTemplatePath = path.join(__dirname, '..', 'Blue Modern Music Concert Ticket-2.png');
+        const legacyTemplatePath = path.join(__dirname, '..', 'Blue Modern Music Concert Ticket.png');
+        const fallbackTemplatePath = path.join(__dirname, '..', 'assets', 'Black Minimalist Music Festival Ticket.png');
 
-    private async downloadImage(url: string): Promise<Buffer> {
-        try {
-            const response = await axios.get(url, { responseType: 'arraybuffer' });
-            return Buffer.from(response.data);
-        } catch (error) {
-            console.error('Error downloading image:', error);
-            throw error;
+        if (fs.existsSync(preferredTemplatePath)) {
+            this.templatePath = preferredTemplatePath;
+        } else if (fs.existsSync(legacyTemplatePath)) {
+            this.templatePath = legacyTemplatePath;
+        } else {
+            this.templatePath = fallbackTemplatePath;
         }
     }
 
@@ -33,200 +33,64 @@ export class TicketGenerator {
         userId: string,
         username: string,
         avatarUrl: string,
-        ticketNumber: number
+        ticketNumber: number,
+        options: { serverName?: string; claimedAt?: Date; displayName?: string } = {}
     ): Promise<Buffer> {
         try {
             // Load the template
             if (!fs.existsSync(this.templatePath)) {
-                throw new Error('Template not found. Please ensure Black Minimalist Music Festival Ticket.png exists in assets folder.');
+                throw new Error('Template not found. Please ensure Blue Modern Music Concert Ticket-2.png exists in the project root.');
             }
 
             const template = await loadImage(this.templatePath);
             const canvas = createCanvas(template.width, template.height);
             const ctx = canvas.getContext('2d');
-            
+
             // Draw template as background
             ctx.drawImage(template, 0, 0, template.width, template.height);
-            
-            // Download and draw user avatar
-            const avatarBuffer = await this.downloadImage(avatarUrl);
-            const avatar = await loadImage(avatarBuffer);
-            
-            // ============================================
-            // LAYOUT CONSTANTS
-            // Template: 4000 x 1294
-            // Right beige panel: X=3393 to X=3999 (606px wide)
-            // Panel center X = 3696
-            // Panel is fully clean beige (#dcb189) from Y=0 to Y=1293
-            // Full usable height: 1293px
-            // ============================================
-            const panelLeft = 3393;
-            const panelRight = 3999;
-            const panelCenterX = Math.round((panelLeft + panelRight) / 2); // 3696
-            const panelWidth = panelRight - panelLeft; // 606
-            const lineWidth = Math.round(panelWidth * 0.72); // ~436px for decorative lines
-            const halfLine = Math.round(lineWidth / 2);
-            
-            const darkColor = '#3b2c1e';       // Dark warm brown
-            const accentColor = '#1a1008';      // Near-black accent
-            const subtleColor = 'rgba(42, 31, 23, 0.45)'; // Semi-transparent dark
-            const faintColor = 'rgba(42, 31, 23, 0.22)';  // Very subtle
-            
-            // ============================================
-            // AVATAR - CIRCULAR, UPPER AREA OF PANEL
-            // Center at Y=220, radius=140 → spans Y=80 to Y=360
-            // ============================================
-            const avatarCenterY = 220;
-            const avatarRadius = 140;
-            
-            // Soft shadow behind avatar
-            ctx.save();
-            ctx.shadowColor = 'rgba(0, 0, 0, 0.25)';
-            ctx.shadowBlur = 30;
-            ctx.shadowOffsetY = 8;
-            ctx.beginPath();
-            ctx.arc(panelCenterX, avatarCenterY, avatarRadius, 0, Math.PI * 2);
-            ctx.fillStyle = '#000';
-            ctx.fill();
-            ctx.restore();
-            
-            // Draw avatar clipped to circle
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(panelCenterX, avatarCenterY, avatarRadius, 0, Math.PI * 2);
-            ctx.clip();
-            ctx.drawImage(
-                avatar,
-                panelCenterX - avatarRadius,
-                avatarCenterY - avatarRadius,
-                avatarRadius * 2,
-                avatarRadius * 2
-            );
-            ctx.restore();
 
-            // Avatar border ring
-            ctx.strokeStyle = darkColor;
-            ctx.lineWidth = 4.5;
-            ctx.beginPath();
-            ctx.arc(panelCenterX, avatarCenterY, avatarRadius + 3, 0, Math.PI * 2);
-            ctx.stroke();
+            const width = template.width;
+            const height = template.height;
 
-            // ============================================
-            // USERNAME - CENTERED BELOW AVATAR (Y ≈ 420)
-            // ============================================
-            const nameY = 420;
-            
-            // Truncate username if needed
-            const maxNameWidth = panelWidth - 80;
-            let displayName = username.toUpperCase();
-            ctx.font = '46px "Montserrat Bold"';
-            while (ctx.measureText(displayName).width > maxNameWidth && displayName.length > 3) {
-                displayName = displayName.slice(0, -1);
-            }
-            if (displayName !== username.toUpperCase()) displayName += '…';
-            
-            // Draw username
-            ctx.fillStyle = darkColor;
-            ctx.font = '46px "Montserrat Bold"';
+            const rightStripLeftX = Math.round(width * 0.847);
+            const rightStripWidth = width - rightStripLeftX;
+
+            const pfpRadius = Math.max(54, Math.round(height * 0.078));
+            const pfpCenterX = Math.round(rightStripLeftX + rightStripWidth * 0.5);
+            const pfpCenterY = Math.round(height * 0.17);
+
+            const nameSource = options.displayName?.trim() || username;
+            const surname = this.extractSurname(nameSource).toUpperCase();
+            const initials = this.extractSurname(username).slice(0, 1).toUpperCase() || 'U';
+
+            const avatarImage = await this.loadAvatarImage(avatarUrl);
+            this.drawCircularAvatar(ctx, avatarImage, pfpCenterX, pfpCenterY, pfpRadius, initials);
+
+            ctx.fillStyle = '#000000';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'alphabetic';
-            ctx.fillText(displayName, panelCenterX, nameY);
+            ctx.font = '700 30px "Montserrat SemiBold"';
+            ctx.fillText('SURNAME', pfpCenterX, pfpCenterY + pfpRadius + 48);
 
-            // ============================================
-            // PARTICIPANT LABEL (Y ≈ 462)
-            // ============================================
-            ctx.fillStyle = subtleColor;
-            ctx.font = '17px "Montserrat SemiBold"';
-            ctx.textAlign = 'center';
-            this.drawSpacedText(ctx, 'PARTICIPANT', panelCenterX, nameY + 42, 8);
-            
-            // ============================================
-            // SEPARATOR LINE (Y ≈ 510)
-            // ============================================
-            this.drawDashedLine(ctx, panelCenterX - halfLine, 510, panelCenterX + halfLine, 510, darkColor, 1.5, [12, 6]);
+            this.drawFittedText(
+                ctx,
+                surname,
+                pfpCenterX,
+                pfpCenterY + pfpRadius + 98,
+                pfpRadius * 2.85,
+                56,
+                30,
+                '700',
+                '"Montserrat Bold"',
+                '#000000'
+            );
 
-            // ============================================
-            // TICKET NUMBER SECTION (Y ≈ 550 - 720)
-            // ============================================
-            const ticketNumStr = `#${ticketNumber.toString().padStart(4, '0')}`;
-            
-            // "TICKET NO." label
-            ctx.fillStyle = subtleColor;
-            ctx.font = '20px "Montserrat Medium"';
-            ctx.textAlign = 'center';
-            ctx.fillText('TICKET NO.', panelCenterX, 560);
-            
-            // Large ticket number
-            ctx.fillStyle = accentColor;
-            ctx.font = '86px "Montserrat Bold"';
-            ctx.textAlign = 'center';
-            ctx.fillText(ticketNumStr, panelCenterX, 665);
-            
-            // Box around ticket number
-            const numWidth = ctx.measureText(ticketNumStr).width;
-            const boxPad = 32;
-            const boxX = panelCenterX - numWidth / 2 - boxPad;
-            const boxY = 590;
-            const boxW = numWidth + boxPad * 2;
-            const boxH = 90;
-            ctx.strokeStyle = darkColor;
-            ctx.lineWidth = 2.5;
-            ctx.strokeRect(boxX, boxY, boxW, boxH);
-            
-            // Corner accents
-            this.drawCornerAccents(ctx, boxX, boxY, boxW, boxH, darkColor, 16, 4);
+            ctx.fillStyle = '#000000';
+            ctx.font = '700 26px "Montserrat"';
+            ctx.fillText(`ID ${userId}`, pfpCenterX, pfpCenterY + pfpRadius + 142);
 
-            // ============================================
-            // SEPARATOR LINE (Y ≈ 740)
-            // ============================================
-            this.drawDashedLine(ctx, panelCenterX - halfLine, 740, panelCenterX + halfLine, 740, darkColor, 1.5, [12, 6]);
-
-            // ============================================
-            // CLAIM DETAILS (Y ≈ 790 - 900)
-            // ============================================
-            const now = new Date();
-            const dateStr = now.toLocaleDateString('en-US', { 
-                timeZone: 'Asia/Kolkata',
-                month: 'short', day: 'numeric', year: 'numeric' 
-            }).toUpperCase();
-            const timeStr = now.toLocaleTimeString('en-US', { 
-                timeZone: 'Asia/Kolkata',
-                hour: '2-digit', minute: '2-digit', hour12: true 
-            }).toUpperCase();
-            
-            // "CLAIMED ON" label
-            ctx.fillStyle = subtleColor;
-            ctx.font = '16px "Montserrat Medium"';
-            ctx.textAlign = 'center';
-            this.drawSpacedText(ctx, 'CLAIMED ON', panelCenterX, 790, 6);
-            
-            // Date & Time
-            ctx.fillStyle = darkColor;
-            ctx.font = '26px "Montserrat SemiBold"';
-            ctx.textAlign = 'center';
-            ctx.fillText(dateStr, panelCenterX, 840);
-            ctx.fillText(timeStr, panelCenterX, 878);
-
-            // ============================================
-            // SEPARATOR LINE (Y ≈ 930)
-            // ============================================
-            this.drawDashedLine(ctx, panelCenterX - halfLine, 930, panelCenterX + halfLine, 930, darkColor, 1.5, [12, 6]);
-
-            // ============================================
-            // USER ID - VERIFICATION (Y ≈ 975)
-            // ============================================
-            ctx.fillStyle = faintColor;
-            ctx.font = '14px "Montserrat"';
-            ctx.textAlign = 'center';
-            ctx.fillText(`ID: ${userId}`, panelCenterX, 975);
-
-            // ============================================
-            // LOTTERY BRANDING - BOTTOM (Y ≈ 1240)
-            // ============================================
-            ctx.fillStyle = faintColor;
-            ctx.font = '15px "Montserrat Medium"';
-            ctx.textAlign = 'center';
-            this.drawSpacedText(ctx, '★ LOTTERY TICKET ★', panelCenterX, 1240, 5);
+            const ticketText = ticketNumber.toString().padStart(4, '0');
+            this.drawBottomRightTicketFrame(ctx, width, height, rightStripLeftX, ticketText);
 
             // Return buffer directly (no file saved)
             return canvas.toBuffer('image/png');
@@ -236,43 +100,142 @@ export class TicketGenerator {
         }
     }
 
-    /** Draw text with manual letter spacing (since canvas doesn't natively support it well) */
-    private drawSpacedText(ctx: any, text: string, x: number, y: number, spacing: number): void {
-        const chars = text.split('');
-        const totalWidth = chars.reduce((w, c) => w + ctx.measureText(c).width + spacing, -spacing);
-        let curX = x - totalWidth / 2;
-        for (const char of chars) {
-            const charW = ctx.measureText(char).width;
-            ctx.fillText(char, curX + charW / 2, y);
-            curX += charW + spacing;
+    private drawBottomRightTicketFrame(
+        ctx: any,
+        width: number,
+        height: number,
+        rightStripLeftX: number,
+        ticketText: string
+    ): void {
+        const rightStripWidth = width - rightStripLeftX;
+        const frameWidth = Math.round(rightStripWidth * 0.86);
+        const frameHeight = Math.round(height * 0.14);
+        const frameLeft = rightStripLeftX + Math.round((rightStripWidth - frameWidth) / 2);
+        const frameTop = height - frameHeight - Math.round(height * 0.045);
+        const frameRight = frameLeft + frameWidth;
+        const frameBottom = frameTop + frameHeight;
+
+        ctx.save();
+        ctx.strokeStyle = '#06172d';
+        ctx.lineWidth = Math.max(3, Math.round(width * 0.0015));
+        ctx.strokeRect(frameLeft, frameTop, frameRight - frameLeft, frameBottom - frameTop);
+
+        ctx.fillStyle = '#06172d';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'alphabetic';
+        ctx.font = '700 42px "Montserrat SemiBold"';
+        ctx.fillText('TICKET NUMBER :', frameRight - Math.round(width * 0.008), frameTop + Math.round(frameHeight * 0.42));
+
+        ctx.font = '800 80px "Montserrat Bold"';
+        ctx.fillText(ticketText, frameRight - Math.round(width * 0.008), frameBottom - Math.round(frameHeight * 0.08));
+        ctx.restore();
+    }
+
+    private async loadAvatarImage(avatarUrl: string): Promise<any | null> {
+        if (!avatarUrl) {
+            return null;
+        }
+
+        try {
+            if (avatarUrl.startsWith('http://') || avatarUrl.startsWith('https://')) {
+                const response = await axios.get<ArrayBuffer>(avatarUrl, {
+                    responseType: 'arraybuffer',
+                    timeout: 8000
+                });
+                return await loadImage(Buffer.from(response.data));
+            }
+
+            if (fs.existsSync(avatarUrl)) {
+                return await loadImage(avatarUrl);
+            }
+
+            return null;
+        } catch {
+            return null;
         }
     }
 
-    /** Draw a dashed line between two points */
-    private drawDashedLine(ctx: any, x1: number, y1: number, x2: number, y2: number, color: string, width: number, dash: number[]): void {
-        ctx.strokeStyle = color;
-        ctx.lineWidth = width;
-        ctx.setLineDash(dash);
+    private drawCircularAvatar(
+        ctx: any,
+        avatarImage: any | null,
+        centerX: number,
+        centerY: number,
+        radius: number,
+        fallbackInitial: string
+    ): void {
+        ctx.save();
         ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+        ctx.closePath();
+        ctx.clip();
+
+        if (avatarImage) {
+            ctx.drawImage(avatarImage, centerX - radius, centerY - radius, radius * 2, radius * 2);
+        } else {
+            // Fallback so ticket still renders when avatar fetch fails.
+            ctx.fillStyle = '#1760b5';
+            ctx.fillRect(centerX - radius, centerY - radius, radius * 2, radius * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = `700 ${Math.round(radius * 1.05)}px "Montserrat Bold"`;
+            ctx.fillText(fallbackInitial || 'U', centerX, centerY + 2);
+        }
+
+        ctx.restore();
+
+        ctx.strokeStyle = '#3bb4ff';
+        ctx.lineWidth = Math.max(5, Math.round(radius * 0.1));
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
         ctx.stroke();
-        ctx.setLineDash([]);
     }
 
-    /** Draw corner accent brackets on a rectangle */
-    private drawCornerAccents(ctx: any, x: number, y: number, w: number, h: number, color: string, len: number, lineW: number): void {
-        ctx.strokeStyle = color;
-        ctx.lineWidth = lineW;
-        const o = 2; // offset outside box
-        // Top-left
-        ctx.beginPath(); ctx.moveTo(x - o, y + len); ctx.lineTo(x - o, y - o); ctx.lineTo(x + len, y - o); ctx.stroke();
-        // Top-right
-        ctx.beginPath(); ctx.moveTo(x + w - len, y - o); ctx.lineTo(x + w + o, y - o); ctx.lineTo(x + w + o, y + len); ctx.stroke();
-        // Bottom-left
-        ctx.beginPath(); ctx.moveTo(x - o, y + h - len); ctx.lineTo(x - o, y + h + o); ctx.lineTo(x + len, y + h + o); ctx.stroke();
-        // Bottom-right
-        ctx.beginPath(); ctx.moveTo(x + w - len, y + h + o); ctx.lineTo(x + w + o, y + h + o); ctx.lineTo(x + w + o, y + h - len); ctx.stroke();
+    private extractSurname(value: string): string {
+        const cleaned = value.trim().replace(/\s+/g, ' ');
+        if (!cleaned) {
+            return 'USER';
+        }
+        const parts = cleaned.split(' ');
+        return parts[parts.length - 1];
+    }
+
+    private drawFittedText(
+        ctx: any,
+        text: string,
+        x: number,
+        y: number,
+        maxWidth: number,
+        startSize: number,
+        minSize: number,
+        weight: string,
+        family: string,
+        color: string
+    ): void {
+        let fontSize = startSize;
+        let displayText = text;
+
+        ctx.fillStyle = color;
+        ctx.textAlign = 'center';
+
+        while (fontSize >= minSize) {
+            ctx.font = `${weight} ${fontSize}px ${family}`;
+            if (ctx.measureText(displayText).width <= maxWidth) {
+                ctx.fillText(displayText, x, y);
+                return;
+            }
+            fontSize -= 1;
+        }
+
+        displayText = text;
+        ctx.font = `${weight} ${minSize}px ${family}`;
+        while (ctx.measureText(displayText).width > maxWidth && displayText.length > 3) {
+            displayText = displayText.slice(0, -1);
+        }
+        if (displayText !== text) {
+            displayText += '…';
+        }
+        ctx.fillText(displayText, x, y);
     }
 
 }
