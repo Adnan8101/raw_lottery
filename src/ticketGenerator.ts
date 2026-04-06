@@ -55,9 +55,9 @@ export class TicketGenerator {
             const rightStripLeftX = Math.round(width * 0.847);
             const rightStripWidth = width - rightStripLeftX;
 
-            const pfpRadius = Math.max(54, Math.round(height * 0.078));
+            const pfpRadius = Math.max(64, Math.round(height * 0.092));
             const pfpCenterX = Math.round(rightStripLeftX + rightStripWidth * 0.5);
-            const pfpCenterY = Math.round(height * 0.17);
+            const pfpCenterY = Math.round(height * 0.19);
 
             const nameSource = options.displayName?.trim() || username;
             const surname = this.extractSurname(nameSource).toUpperCase();
@@ -69,25 +69,47 @@ export class TicketGenerator {
             ctx.fillStyle = '#000000';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'alphabetic';
-            ctx.font = '700 30px "Montserrat SemiBold"';
-            ctx.fillText('SURNAME', pfpCenterX, pfpCenterY + pfpRadius + 48);
+            ctx.font = '800 36px "Montserrat Bold"';
+            ctx.fillText('SURNAME', pfpCenterX, pfpCenterY + pfpRadius + 54);
 
             this.drawFittedText(
                 ctx,
                 surname,
                 pfpCenterX,
-                pfpCenterY + pfpRadius + 98,
-                pfpRadius * 2.85,
-                56,
-                30,
-                '700',
+                pfpCenterY + pfpRadius + 114,
+                pfpRadius * 3,
+                66,
+                34,
+                '800',
                 '"Montserrat Bold"',
                 '#000000'
             );
 
             ctx.fillStyle = '#000000';
-            ctx.font = '700 26px "Montserrat"';
-            ctx.fillText(`ID ${userId}`, pfpCenterX, pfpCenterY + pfpRadius + 142);
+            ctx.font = '700 30px "Montserrat SemiBold"';
+            ctx.fillText(`ID ${userId}`, pfpCenterX, pfpCenterY + pfpRadius + 168);
+
+            const ticketFrameHeight = Math.round(height * 0.165);
+            const ticketFrameTop = height - ticketFrameHeight - Math.round(height * 0.045);
+            const userIdY = pfpCenterY + pfpRadius + 168;
+            const pricePanelWidth = Math.round(rightStripWidth * 0.9);
+            const pricePanelHeight = Math.round(height * 0.09);
+            const pricePanelLeft = pfpCenterX - Math.round(pricePanelWidth / 2);
+            const minPricePanelTop = userIdY + Math.round(height * 0.045);
+            const preferredPricePanelTop = ticketFrameTop - pricePanelHeight - Math.round(height * 0.07);
+            const pricePanelTop = Math.max(minPricePanelTop, preferredPricePanelTop);
+
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+            ctx.fillRect(pricePanelLeft, pricePanelTop, pricePanelWidth, pricePanelHeight);
+            ctx.strokeStyle = '#06172d';
+            ctx.lineWidth = Math.max(4, Math.round(width * 0.0019));
+            ctx.strokeRect(pricePanelLeft, pricePanelTop, pricePanelWidth, pricePanelHeight);
+
+            ctx.fillStyle = '#06172d';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = '800 38px "Montserrat Bold"';
+            ctx.fillText('PRICE POOL : ₹1000', pfpCenterX, pricePanelTop + Math.round(pricePanelHeight * 0.52));
 
             const ticketText = ticketNumber.toString().padStart(4, '0');
             this.drawBottomRightTicketFrame(ctx, width, height, rightStripLeftX, ticketText);
@@ -108,8 +130,8 @@ export class TicketGenerator {
         ticketText: string
     ): void {
         const rightStripWidth = width - rightStripLeftX;
-        const frameWidth = Math.round(rightStripWidth * 0.86);
-        const frameHeight = Math.round(height * 0.14);
+        const frameWidth = Math.round(rightStripWidth * 0.9);
+        const frameHeight = Math.round(height * 0.165);
         const frameLeft = rightStripLeftX + Math.round((rightStripWidth - frameWidth) / 2);
         const frameTop = height - frameHeight - Math.round(height * 0.045);
         const frameRight = frameLeft + frameWidth;
@@ -117,17 +139,21 @@ export class TicketGenerator {
 
         ctx.save();
         ctx.strokeStyle = '#06172d';
-        ctx.lineWidth = Math.max(3, Math.round(width * 0.0015));
+        ctx.lineWidth = Math.max(5, Math.round(width * 0.0023));
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.38)';
+        ctx.fillRect(frameLeft, frameTop, frameRight - frameLeft, frameBottom - frameTop);
         ctx.strokeRect(frameLeft, frameTop, frameRight - frameLeft, frameBottom - frameTop);
 
         ctx.fillStyle = '#06172d';
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'alphabetic';
-        ctx.font = '700 42px "Montserrat SemiBold"';
-        ctx.fillText('TICKET NUMBER :', frameRight - Math.round(width * 0.008), frameTop + Math.round(frameHeight * 0.42));
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.25)';
+        ctx.shadowBlur = Math.max(4, Math.round(width * 0.003));
+        ctx.font = '800 34px "Montserrat Bold"';
+        ctx.fillText('TICKET NUMBER :', frameLeft + Math.round(frameWidth * 0.5), frameTop + Math.round(frameHeight * 0.34));
 
-        ctx.font = '800 80px "Montserrat Bold"';
-        ctx.fillText(ticketText, frameRight - Math.round(width * 0.008), frameBottom - Math.round(frameHeight * 0.08));
+        ctx.font = '900 76px "Montserrat Bold"';
+        ctx.fillText(ticketText, frameLeft + Math.round(frameWidth * 0.5), frameTop + Math.round(frameHeight * 0.77));
         ctx.restore();
     }
 
