@@ -8,18 +8,25 @@ dotenv.config();
 // Queue item interface
 interface QueueItem {
     message: Message;
-    resolve: () => void;
+    userId: string;
 }
+
+type QueueEnqueueResult = 'queued' | 'duplicate' | 'full';
 
 class LotteryBot {
     private client: Client;
     private ticketGenerator: TicketGenerator;
     private database: Database;
     private readonly ownerUserId: string = '929297205796417597';
-    private readonly maxTicketQueueSize: number = 500;
+    private readonly maxTicketQueueSize: number = 2000;
+    private readonly queueYieldEvery: number = 25;
+    private readonly dmDisabledNoticeCooldownMs: number = 10000;
     
     // Queue system to prevent duplicate tickets
     private ticketQueue: QueueItem[] = [];
+    private ticketQueueHead: number = 0;
+    private queuedClaimUsers: Set<string> = new Set();
+    private dmDisabledNoticeAt: Map<string, number> = new Map();
     private isProcessingQueue: boolean = false;
     
     constructor() {
@@ -76,35 +83,118 @@ class LotteryBot {
         return message.member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
     }
 
-    // Add ticket claim to queue and wait for processing
-    private async addToTicketQueue(message: Message): Promise<void> {
-        return new Promise((resolve) => {
-            this.ticketQueue.push({ message, resolve });
-            this.processTicketQueue();
-        });
+    private async notifyDmDisabled(message: Message): Promise<void> {
+        const now = Date.now();
+        const userId = message.author.id;
+        const lastNotice = this.dmDisabledNoticeAt.get(userId);
+        if (lastNotice && now - lastNotice < this.dmDisabledNoticeCooldownMs) {
+            return;
+        }
+
+        this.dmDisabledNoticeAt.set(userId, now);
+
+        // Keep the map bounded during long uptimes.
+        if (this.dmDisabledNoticeAt.size > 5000) {
+            for (const [id, ts] of this.dmDisabledNoticeAt.entries()) {
+                if (now - ts > this.dmDisabledNoticeCooldownMs * 6) {
+                    this.dmDisabledNoticeAt.delete(id);
+                }
+            }
+        }
+
+        const content = 'Your DMs are off. Please enable DMs and type `!lottery` again to claim your ticket.';
+
+        try {
+            await message.reply({
+                content,
+                allowedMentions: { repliedUser: false }
+            });
+            return;
+        } catch (replyError) {
+            console.error('Failed to reply with DM-disabled message:', replyError);
+        }
+
+        try {
+            const textChannel = message.channel as TextChannel;
+            await textChannel.send(content);
+        } catch (sendError) {
+            console.error('Failed to send DM-disabled fallback message:', sendError);
+        }
+    }
+
+    private getPendingQueueSize(): number {
+        return this.ticketQueue.length - this.ticketQueueHead;
+    }
+
+    private compactQueueIfNeeded(): void {
+        if (this.ticketQueueHead >= 128 && this.ticketQueueHead * 2 >= this.ticketQueue.length) {
+            this.ticketQueue = this.ticketQueue.slice(this.ticketQueueHead);
+            this.ticketQueueHead = 0;
+        }
+    }
+
+    // Add ticket claim to queue for background processing.
+    private addToTicketQueue(message: Message): QueueEnqueueResult {
+        const userId = message.author.id;
+
+        if (this.queuedClaimUsers.has(userId)) {
+            return 'duplicate';
+        }
+
+        if (this.getPendingQueueSize() >= this.maxTicketQueueSize) {
+            return 'full';
+        }
+
+        this.ticketQueue.push({ message, userId });
+        this.queuedClaimUsers.add(userId);
+        void this.processTicketQueue();
+        return 'queued';
     }
 
     // Process ticket queue one by one
     private async processTicketQueue(): Promise<void> {
-        if (this.isProcessingQueue || this.ticketQueue.length === 0) {
+        if (this.isProcessingQueue || this.getPendingQueueSize() === 0) {
             return;
         }
 
         this.isProcessingQueue = true;
         try {
-            while (this.ticketQueue.length > 0) {
-                const item = this.ticketQueue.shift();
-                if (item) {
-                    try {
-                        await this.processTicketClaim(item.message);
-                    } catch (error) {
-                        console.error('Error processing ticket claim:', error);
-                    }
-                    item.resolve();
+            let processedSinceYield = 0;
+
+            while (this.ticketQueueHead < this.ticketQueue.length) {
+                const item = this.ticketQueue[this.ticketQueueHead];
+                this.ticketQueueHead += 1;
+
+                if (!item) {
+                    continue;
+                }
+
+                try {
+                    await this.processTicketClaim(item.message);
+                } catch (error) {
+                    console.error('Error processing ticket claim:', error);
+                } finally {
+                    this.queuedClaimUsers.delete(item.userId);
+                }
+
+                this.compactQueueIfNeeded();
+                processedSinceYield += 1;
+
+                if (processedSinceYield >= this.queueYieldEvery) {
+                    processedSinceYield = 0;
+                    await new Promise<void>((resolve) => setImmediate(resolve));
                 }
             }
+
+            this.ticketQueue = [];
+            this.ticketQueueHead = 0;
         } finally {
             this.isProcessingQueue = false;
+
+            // Handle items that might have been queued while we were finishing.
+            if (this.getPendingQueueSize() > 0) {
+                void this.processTicketQueue();
+            }
         }
     }
 
@@ -293,28 +383,15 @@ class LotteryBot {
             return;
         }
 
-        // Check if already claimed BEFORE adding to queue
-        const existingParticipant = await Participant.exists({ userId: message.author.id });
-        if (existingParticipant) {
-            await message.reply('you have already claimed your ticket');
-            return;
-        }
-
-        // Test if user has DMs enabled BEFORE adding to queue
-        try {
-            await message.author.send('Verifying DM access...');
-        } catch (dmError) {
-            await message.reply(`<@${message.author.id}> Your DMs are off. Please enable DMs and type \`!lottery\` again to claim your ticket.`);
-            return;
-        }
-
-        if (this.ticketQueue.length >= this.maxTicketQueueSize) {
+        const enqueueResult = this.addToTicketQueue(message);
+        if (enqueueResult === 'full') {
             await message.reply('Ticket queue is currently full. Please try again in a few seconds.');
             return;
         }
 
-        // Add to queue for sequential processing
-        await this.addToTicketQueue(message);
+        if (enqueueResult === 'duplicate') {
+            await message.reply('Your claim request is already in queue. Please wait.');
+        }
     }
 
     // Process ticket claim - called from queue (one at a time)
@@ -327,14 +404,21 @@ class LotteryBot {
                 return;
             }
 
-            // Get FRESH config for accurate ticket counter
-            const config = await LotteryConfig.findOne().select({ ticketCounter: 1 }).lean();
-            if (!config) {
+            // Atomically reserve a unique ticket number.
+            const counterDoc = await LotteryConfig.findOneAndUpdate(
+                {},
+                { $inc: { ticketCounter: 1 } },
+                {
+                    new: false,
+                    projection: { ticketCounter: 1 }
+                }
+            ).lean();
+            if (!counterDoc) {
                 await message.reply('Lottery is not configured.');
                 return;
             }
 
-            const ticketNumber = config.ticketCounter;
+            const ticketNumber = counterDoc.ticketCounter;
             const avatarUrl = message.author.displayAvatarURL({ extension: 'png', size: 256 });
             const claimedAt = new Date();
 
@@ -351,22 +435,25 @@ class LotteryBot {
                 }
             );
 
-            // Save participant to database (no file path stored)
-            await Participant.create({
-                userId: message.author.id,
-                username: message.author.username,
-                ticketNumber: ticketNumber,
-                claimedAt,
-                avatarUrl: avatarUrl
-            });
+            // Save participant atomically so duplicate claims cannot create two records.
+            const claimWrite = await Participant.updateOne(
+                { userId: message.author.id },
+                {
+                    $setOnInsert: {
+                        userId: message.author.id,
+                        username: message.author.username,
+                        ticketNumber: ticketNumber,
+                        claimedAt,
+                        avatarUrl: avatarUrl
+                    }
+                },
+                { upsert: true }
+            );
 
-            // Increment counter IMMEDIATELY after creating participant
-            await LotteryConfig.updateOne({}, { $inc: { ticketCounter: 1 } });
-
-            const totalParticipants = await Participant.countDocuments();
-
-            // Send single-line confirmation in channel
-            await message.reply(`ticket #${ticketNumber} sent in your dms`);
+            if (claimWrite.upsertedCount === 0) {
+                await message.reply('you have already claimed your ticket');
+                return;
+            }
 
             // Send ticket to user's DM (plain image + text, no embed)
             const dmAttachment = new AttachmentBuilder(ticketBuffer, { name: 'ticket.png' });
@@ -379,10 +466,22 @@ class LotteryBot {
                 hour: '2-digit', minute: '2-digit', hour12: true 
             });
 
-            await message.author.send({
-                content: `Ticket ID: #${ticketNumber}\nUsername: ${message.author.username}\nClaimed: ${dateStr} at ${timeStr}`,
-                files: [dmAttachment]
-            });
+            try {
+                await message.author.send({
+                    content: `Ticket ID: #${ticketNumber}\nUsername: ${message.author.username}\nClaimed: ${dateStr} at ${timeStr}`,
+                    files: [dmAttachment]
+                });
+            } catch (dmError) {
+                // Release user claim entry if DM cannot be delivered.
+                await Participant.deleteOne({ userId: message.author.id, ticketNumber });
+                await this.notifyDmDisabled(message);
+                return;
+            }
+
+            const totalParticipants = await Participant.countDocuments();
+
+            // Send single-line confirmation in channel after successful DM.
+            await message.reply(`ticket #${ticketNumber} sent in your dms`);
 
             // Send to logs
             if (message.guild) {
@@ -462,16 +561,18 @@ class LotteryBot {
 
         // Exclude all previous winners from being picked again
         const winnerUserIds = (await Winner.find().select({ userId: 1, _id: 0 }).lean()).map(w => w.userId);
-        const availableParticipants = await Participant.find({
-            userId: { $nin: winnerUserIds }
-        }).select({ userId: 1, username: 1, ticketNumber: 1, avatarUrl: 1, _id: 0 }).lean();
+        const sampledWinners = await Participant.aggregate([
+            { $match: { userId: { $nin: winnerUserIds } } },
+            { $sample: { size: 1 } },
+            { $project: { _id: 0, userId: 1, username: 1, ticketNumber: 1, avatarUrl: 1 } }
+        ]);
 
-        if (availableParticipants.length === 0) {
+        if (sampledWinners.length === 0) {
             await message.reply('All participants have already won.');
             return;
         }
 
-        const winner = availableParticipants[Math.floor(Math.random() * availableParticipants.length)];
+        const winner = sampledWinners[0];
 
         await Winner.create({
             userId: winner.userId,
@@ -529,16 +630,18 @@ class LotteryBot {
 
         // Exclude all remaining winners from being picked
         const winnerUserIds = (await Winner.find().select({ userId: 1, _id: 0 }).lean()).map(w => w.userId);
-        const availableParticipants = await Participant.find({
-            userId: { $nin: winnerUserIds }
-        }).select({ userId: 1, username: 1, ticketNumber: 1, avatarUrl: 1, _id: 0 }).lean();
+        const sampledWinners = await Participant.aggregate([
+            { $match: { userId: { $nin: winnerUserIds } } },
+            { $sample: { size: 1 } },
+            { $project: { _id: 0, userId: 1, username: 1, ticketNumber: 1, avatarUrl: 1 } }
+        ]);
 
-        if (availableParticipants.length === 0) {
+        if (sampledWinners.length === 0) {
             await message.reply('No more available participants to reroll.');
             return;
         }
 
-        const newWinner = availableParticipants[Math.floor(Math.random() * availableParticipants.length)];
+        const newWinner = sampledWinners[0];
         
         await Winner.create({
             userId: newWinner.userId,
@@ -778,14 +881,6 @@ class LotteryBot {
                             console.error(`Error sending DM to ${user.username}:`, dmError);
                             if (failedUsers.length < maxFailedUsersToReport) {
                                 failedUsers.push(`${user.username} (${user.tag})`);
-                            }
-                            
-                            // Try to notify the user in the channel
-                            try {
-                                const textChannel = message.channel as TextChannel;
-                                await textChannel.send(`<@${user.id}> Your DMs are off. Please enable DMs and contact an admin to refresh your ticket.`);
-                            } catch (err) {
-                                console.error('Could not notify user in channel:', err);
                             }
                         }
                     }
@@ -1095,6 +1190,14 @@ class LotteryBot {
         this.client.login(token);
     }
 }
+
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('Uncaught exception:', error);
+});
 
 const bot = new LotteryBot();
 bot.start();
