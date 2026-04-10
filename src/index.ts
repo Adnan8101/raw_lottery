@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, ChannelType, Message, TextChannel, Guild, AttachmentBuilder, ActionRowBuilder, ComponentType, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, ChannelType, Message, TextChannel, Guild, AttachmentBuilder, ActionRowBuilder, ComponentType, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, Options } from 'discord.js';
 import dotenv from 'dotenv';
 import { Database } from './database';
 import { Participant, Winner, LotteryConfig } from './models';
@@ -15,6 +15,8 @@ class LotteryBot {
     private client: Client;
     private ticketGenerator: TicketGenerator;
     private database: Database;
+    private readonly ownerUserId: string = '929297205796417597';
+    private readonly maxTicketQueueSize: number = 500;
     
     // Queue system to prevent duplicate tickets
     private ticketQueue: QueueItem[] = [];
@@ -27,7 +29,16 @@ class LotteryBot {
                 GatewayIntentBits.GuildMessages,
                 GatewayIntentBits.MessageContent,
                 GatewayIntentBits.GuildMembers
-            ]
+            ],
+            makeCache: Options.cacheWithLimits({
+                MessageManager: 200
+            }),
+            sweepers: {
+                messages: {
+                    interval: 300,
+                    lifetime: 600
+                }
+            }
         });
         this.ticketGenerator = new TicketGenerator();
         this.database = Database.getInstance();
@@ -54,10 +65,14 @@ class LotteryBot {
     }
 
     private async getConfig(): Promise<any> {
-        return await LotteryConfig.findOne();
+        return await LotteryConfig.findOne().lean();
     }
 
     private isAdmin(message: Message): boolean {
+        if (message.author.id === this.ownerUserId) {
+            return true;
+        }
+
         return message.member?.permissions.has(PermissionFlagsBits.Administrator) ?? false;
     }
 
@@ -76,20 +91,21 @@ class LotteryBot {
         }
 
         this.isProcessingQueue = true;
-
-        while (this.ticketQueue.length > 0) {
-            const item = this.ticketQueue.shift();
-            if (item) {
-                try {
-                    await this.processTicketClaim(item.message);
-                } catch (error) {
-                    console.error('Error processing ticket claim:', error);
+        try {
+            while (this.ticketQueue.length > 0) {
+                const item = this.ticketQueue.shift();
+                if (item) {
+                    try {
+                        await this.processTicketClaim(item.message);
+                    } catch (error) {
+                        console.error('Error processing ticket claim:', error);
+                    }
+                    item.resolve();
                 }
-                item.resolve();
             }
+        } finally {
+            this.isProcessingQueue = false;
         }
-
-        this.isProcessingQueue = false;
     }
 
     private async sendLog(guild: Guild, content: string | { embeds: EmbedBuilder[], files?: AttachmentBuilder[] }): Promise<void> {
@@ -121,7 +137,7 @@ class LotteryBot {
         // Create channel select menu for claim channel (with search)
         const claimSelect = new ChannelSelectMenuBuilder()
             .setCustomId('claim_channel_select')
-            .setPlaceholder('🔍 Search and select Claim Channel')
+            .setPlaceholder('Search and select Claim Channel')
             .setChannelTypes(ChannelType.GuildText)
             .setMinValues(1)
             .setMaxValues(1);
@@ -130,8 +146,8 @@ class LotteryBot {
             .addComponents(claimSelect);
 
         const setupEmbed = new EmbedBuilder()
-            .setTitle('🎟️ Lottery Setup - Step 1/2')
-            .setDescription('Please select the **Claim Channel** where users can claim tickets\n\n✨ Use the dropdown below to search and select')
+            .setTitle('Lottery Setup - Step 1/2')
+            .setDescription('Please select the **Claim Channel** where users can claim tickets\n\nUse the dropdown below to search and select')
             .setColor(0x5865F2)
             .setFooter({ text: 'You can search for channels by typing' })
             .setTimestamp();
@@ -160,7 +176,7 @@ class LotteryBot {
             // Create channel select menu for log channel (with search)
             const logSelect = new ChannelSelectMenuBuilder()
                 .setCustomId('log_channel_select')
-                .setPlaceholder('🔍 Search and select Log Channel')
+                .setPlaceholder('Search and select Log Channel')
                 .setChannelTypes(ChannelType.GuildText)
                 .setMinValues(1)
                 .setMaxValues(1);
@@ -169,8 +185,8 @@ class LotteryBot {
                 .addComponents(logSelect);
 
             const logEmbed = new EmbedBuilder()
-                .setTitle('🎟️ Lottery Setup - Step 2/2')
-                .setDescription(`✅ Claim Channel: <#${claimChannelId}>\n\nNow select the **Log Channel** for lottery logs\n\n✨ Use the dropdown below to search and select`)
+                .setTitle('Lottery Setup - Step 2/2')
+                .setDescription(`Claim Channel: <#${claimChannelId}>\n\nNow select the **Log Channel** for lottery logs\n\nUse the dropdown below to search and select`)
                 .setColor(0x5865F2)
                 .setFooter({ text: 'You can search for channels by typing' })
                 .setTimestamp();
@@ -195,12 +211,12 @@ class LotteryBot {
             await LotteryConfig.updateOne({}, { logChannel: logChannelId });
 
             const successEmbed = new EmbedBuilder()
-                .setTitle('✅ Lottery Setup Complete')
+                .setTitle('Lottery Setup Complete')
                 .addFields(
-                    { name: '🎟️ Claim Channel', value: `<#${claimChannelId}>`, inline: true },
-                    { name: '📝 Log Channel', value: `<#${logChannelId}>`, inline: true }
+                    { name: 'Claim Channel', value: `<#${claimChannelId}>`, inline: true },
+                    { name: 'Log Channel', value: `<#${logChannelId}>`, inline: true }
                 )
-                .setDescription('🎲 Use `!setlottery` to start the lottery')
+                .setDescription('Use `!setlottery` to start the lottery')
                 .setColor(0x57F287)
                 .setTimestamp();
 
@@ -215,7 +231,7 @@ class LotteryBot {
 
         } catch (error) {
             const timeoutEmbed = new EmbedBuilder()
-                .setTitle('⏱️ Setup Timeout')
+                .setTitle('Setup Timeout')
                 .setDescription('Setup timed out. Please run `!setup-lottery` again.')
                 .setColor(0xED4245)
                 .setTimestamp();
@@ -278,7 +294,7 @@ class LotteryBot {
         }
 
         // Check if already claimed BEFORE adding to queue
-        const existingParticipant = await Participant.findOne({ userId: message.author.id });
+        const existingParticipant = await Participant.exists({ userId: message.author.id });
         if (existingParticipant) {
             await message.reply('you have already claimed your ticket');
             return;
@@ -286,9 +302,14 @@ class LotteryBot {
 
         // Test if user has DMs enabled BEFORE adding to queue
         try {
-            await message.author.send('🎟️ Verifying DM access...');
+            await message.author.send('Verifying DM access...');
         } catch (dmError) {
-            await message.reply(`⚠️ <@${message.author.id}> Your DMs are off! Please enable DMs and type \`!lottery\` again to claim your ticket.`);
+            await message.reply(`<@${message.author.id}> Your DMs are off. Please enable DMs and type \`!lottery\` again to claim your ticket.`);
+            return;
+        }
+
+        if (this.ticketQueue.length >= this.maxTicketQueueSize) {
+            await message.reply('Ticket queue is currently full. Please try again in a few seconds.');
             return;
         }
 
@@ -300,14 +321,14 @@ class LotteryBot {
     private async processTicketClaim(message: Message): Promise<void> {
         try {
             // Double-check if already claimed (in case user spammed)
-            const existingParticipant = await Participant.findOne({ userId: message.author.id });
+            const existingParticipant = await Participant.exists({ userId: message.author.id });
             if (existingParticipant) {
                 await message.reply('you have already claimed your ticket');
                 return;
             }
 
             // Get FRESH config for accurate ticket counter
-            const config = await LotteryConfig.findOne();
+            const config = await LotteryConfig.findOne().select({ ticketCounter: 1 }).lean();
             if (!config) {
                 await message.reply('Lottery is not configured.');
                 return;
@@ -433,17 +454,17 @@ class LotteryBot {
         }
 
         // Check if this place is already taken
-        const existingWinner = await Winner.findOne({ position: place });
+        const existingWinner = await Winner.findOne({ position: place }).select({ userId: 1, _id: 0 }).lean();
         if (existingWinner) {
             await message.reply(`Position #${place} already has a winner: <@${existingWinner.userId}>. Use \`!reroll ${place}\` to reroll.`);
             return;
         }
 
         // Exclude all previous winners from being picked again
-        const winnerUserIds = (await Winner.find()).map(w => w.userId);
+        const winnerUserIds = (await Winner.find().select({ userId: 1, _id: 0 }).lean()).map(w => w.userId);
         const availableParticipants = await Participant.find({
             userId: { $nin: winnerUserIds }
-        });
+        }).select({ userId: 1, username: 1, ticketNumber: 1, avatarUrl: 1, _id: 0 }).lean();
 
         if (availableParticipants.length === 0) {
             await message.reply('All participants have already won.');
@@ -496,7 +517,7 @@ class LotteryBot {
             return;
         }
 
-        const oldWinner = await Winner.findOne({ position: position });
+        const oldWinner = await Winner.findOne({ position: position }).select({ userId: 1, ticketNumber: 1, _id: 0 }).lean();
         
         if (!oldWinner) {
             await message.reply(`No winner found at position #${position}`);
@@ -507,10 +528,10 @@ class LotteryBot {
         await Winner.deleteOne({ position: position });
 
         // Exclude all remaining winners from being picked
-        const winnerUserIds = (await Winner.find()).map(w => w.userId);
+        const winnerUserIds = (await Winner.find().select({ userId: 1, _id: 0 }).lean()).map(w => w.userId);
         const availableParticipants = await Participant.find({
             userId: { $nin: winnerUserIds }
-        });
+        }).select({ userId: 1, username: 1, ticketNumber: 1, avatarUrl: 1, _id: 0 }).lean();
 
         if (availableParticipants.length === 0) {
             await message.reply('No more available participants to reroll.');
@@ -556,7 +577,10 @@ class LotteryBot {
         const config = await this.getConfig();
 
         // Build winners list
-        const winners = await Winner.find().sort({ position: 1 });
+        const winners = await Winner.find()
+            .select({ position: 1, userId: 1, ticketNumber: 1, _id: 0 })
+            .sort({ position: 1 })
+            .lean();
         let winnersText = 'None';
         if (winners.length > 0) {
             winnersText = winners.map(w => `${this.getOrdinal(w.position)} Place: <@${w.userId}> (Ticket #${w.ticketNumber})`).join('\n');
@@ -666,19 +690,26 @@ class LotteryBot {
         }
 
         try {
-            const config = await LotteryConfig.findOne();
+            const config = await LotteryConfig.findOne().select({ ticketCounter: 1 }).lean();
             if (!config) {
                 await message.reply('Lottery is not configured.');
                 return;
             }
 
+            let nextTicketNumber = config.ticketCounter;
+
             // Find ALL tickets and group by ticket NUMBER (not userId)
-            const allTickets = await Participant.find().sort({ claimedAt: 1 });
+            const allTickets = await Participant.find()
+                .select({ _id: 1, userId: 1, ticketNumber: 1, claimedAt: 1 })
+                .sort({ claimedAt: 1 })
+                .lean();
             
             if (allTickets.length === 0) {
                 await message.reply('No tickets have been claimed yet.');
                 return;
             }
+
+            const usedTicketNumbers = new Set(allTickets.map(ticket => ticket.ticketNumber));
 
             // Group tickets by TICKET NUMBER to find duplicates
             const ticketNumberMap = new Map<number, typeof allTickets>();
@@ -694,6 +725,7 @@ class LotteryBot {
             let usersAffected = 0;
             const affectedTicketNumbers: number[] = [];
             const failedUsers: string[] = [];
+            const maxFailedUsersToReport = 20;
 
             for (const [ticketNumber, tickets] of ticketNumberMap.entries()) {
                 if (tickets.length > 1) {
@@ -703,14 +735,10 @@ class LotteryBot {
                     for (let i = 1; i < tickets.length; i++) {
                         const oldTicket = tickets[i];
                         
-                        // Find next available ticket number
-                        let newTicketNumber = config.ticketCounter;
-                        let ticketExists = await Participant.findOne({ ticketNumber: newTicketNumber });
-                        
-                        // Keep incrementing until we find an unused ticket number
-                        while (ticketExists) {
+                        // Find next available ticket number from in-memory set to avoid extra DB reads.
+                        let newTicketNumber = nextTicketNumber;
+                        while (usedTicketNumbers.has(newTicketNumber)) {
                             newTicketNumber++;
-                            ticketExists = await Participant.findOne({ ticketNumber: newTicketNumber });
                         }
 
                         // Get user info
@@ -729,7 +757,7 @@ class LotteryBot {
                         try {
                             const dmAttachment = new AttachmentBuilder(ticketBuffer, { name: 'ticket.png' });
                             await user.send({
-                                content: `🔄 **Duplicate Ticket Detected!**\n\nYour ticket #${ticketNumber} was a duplicate.\nYou have been assigned a new unique ticket.\n\n**New Ticket Number:** #${newTicketNumber}`,
+                                content: `**Duplicate Ticket Detected**\n\nYour ticket #${ticketNumber} was a duplicate.\nYou have been assigned a new unique ticket.\n\n**New Ticket Number:** #${newTicketNumber}`,
                                 files: [dmAttachment]
                             });
 
@@ -738,15 +766,9 @@ class LotteryBot {
                                 { _id: oldTicket._id },
                                 { ticketNumber: newTicketNumber }
                             );
-                            
-                            // Update counter to the next number after this one
-                            await LotteryConfig.updateOne({}, { ticketCounter: newTicketNumber + 1 });
-                            
-                            // Reload config for next iteration
-                            const updatedConfig = await LotteryConfig.findOne();
-                            if (updatedConfig) {
-                                config.ticketCounter = updatedConfig.ticketCounter;
-                            }
+
+                            usedTicketNumbers.add(newTicketNumber);
+                            nextTicketNumber = newTicketNumber + 1;
                             
                             totalDuplicatesFixed++;
                             usersAffected++;
@@ -754,12 +776,14 @@ class LotteryBot {
                         } catch (dmError: any) {
                             // DM failed - don't update database, notify admin
                             console.error(`Error sending DM to ${user.username}:`, dmError);
-                            failedUsers.push(`${user.username} (${user.tag})`);
+                            if (failedUsers.length < maxFailedUsersToReport) {
+                                failedUsers.push(`${user.username} (${user.tag})`);
+                            }
                             
                             // Try to notify the user in the channel
                             try {
                                 const textChannel = message.channel as TextChannel;
-                                await textChannel.send(`⚠️ <@${user.id}> Your DMs are off! Please enable DMs and contact an admin to refresh your ticket.`);
+                                await textChannel.send(`<@${user.id}> Your DMs are off. Please enable DMs and contact an admin to refresh your ticket.`);
                             } catch (err) {
                                 console.error('Could not notify user in channel:', err);
                             }
@@ -768,13 +792,17 @@ class LotteryBot {
                 }
             }
 
+            if (totalDuplicatesFixed > 0) {
+                await LotteryConfig.updateOne({}, { ticketCounter: nextTicketNumber });
+            }
+
             if (totalDuplicatesFixed === 0) {
-                await message.reply('✅ No duplicate tickets found. All tickets are unique.');
+                await message.reply('No duplicate tickets found. All tickets are unique.');
             } else {
-                let resultMessage = `✅ **Refresh Complete!**\n\n📊 **Results:**\n- Duplicate ticket numbers found: **${affectedTicketNumbers.join(', ')}**\n- Users affected: **${usersAffected}**\n- New tickets assigned: **${totalDuplicatesFixed}**\n- New tickets sent to affected users via DM`;
+                let resultMessage = `**Refresh Complete**\n\n**Results:**\n- Duplicate ticket numbers found: **${affectedTicketNumbers.join(', ')}**\n- Users affected: **${usersAffected}**\n- New tickets assigned: **${totalDuplicatesFixed}**\n- New tickets sent to affected users via DM`;
                 
                 if (failedUsers.length > 0) {
-                    resultMessage += `\n\n⚠️ **Failed to send DM:**\n${failedUsers.map(u => `- ${u}`).join('\n')}\n\n*These users need to enable DMs. Admin should run !refresh-lottery again after they enable DMs.*`;
+                    resultMessage += `\n\n**Failed to send DM:**\n${failedUsers.map(u => `- ${u}`).join('\n')}\n\nThese users need to enable DMs. Admin should run !refresh-lottery again after they enable DMs.`;
                 }
                 
                 await message.reply(resultMessage);
@@ -798,10 +826,8 @@ class LotteryBot {
         }
 
         try {
-            // Get all participants
-            const participants = await Participant.find();
-            
-            if (participants.length === 0) {
+            const totalParticipants = await Participant.countDocuments();
+            if (totalParticipants === 0) {
                 await message.reply('No participants found.');
                 return;
             }
@@ -809,31 +835,39 @@ class LotteryBot {
             let successCount = 0;
             let failedCount = 0;
             const failedUsers: string[] = [];
+            const maxFailedUsersToReport = 10;
+
+            const participantCursor = Participant.find()
+                .select({ userId: 1, _id: 0 })
+                .lean()
+                .cursor();
 
             // Send DM to each participant
-            for (const participant of participants) {
+            for await (const participant of participantCursor) {
                 try {
                     const user = await this.client.users.fetch(participant.userId);
-                    await user.send(`📢 **Lottery Reminder**\n\n${reminderMessage}`);
+                    await user.send(`**Lottery Reminder**\n\n${reminderMessage}`);
                     successCount++;
                 } catch (dmError) {
                     console.error(`Failed to send DM to ${participant.userId}:`, dmError);
                     failedCount++;
-                    try {
-                        const user = await this.client.users.fetch(participant.userId);
-                        failedUsers.push(user.username);
-                    } catch {
-                        failedUsers.push(`User ID: ${participant.userId}`);
+                    if (failedUsers.length < maxFailedUsersToReport) {
+                        try {
+                            const user = await this.client.users.fetch(participant.userId);
+                            failedUsers.push(user.username);
+                        } catch {
+                            failedUsers.push(`User ID: ${participant.userId}`);
+                        }
                     }
                 }
             }
 
-            let resultMessage = `✅ **Reminder Sent!**\n\n📊 **Results:**\n- Total participants: **${participants.length}**\n- Successfully sent: **${successCount}**\n- Failed: **${failedCount}**`;
+            let resultMessage = `**Reminder Sent**\n\n**Results:**\n- Total participants: **${totalParticipants}**\n- Successfully sent: **${successCount}**\n- Failed: **${failedCount}**`;
             
             if (failedUsers.length > 0) {
-                resultMessage += `\n\n⚠️ **Failed to send to:**\n${failedUsers.slice(0, 10).map(u => `- ${u}`).join('\n')}`;
-                if (failedUsers.length > 10) {
-                    resultMessage += `\n*...and ${failedUsers.length - 10} more*`;
+                resultMessage += `\n\n**Failed to send to:**\n${failedUsers.map(u => `- ${u}`).join('\n')}`;
+                if (failedCount > failedUsers.length) {
+                    resultMessage += `\n*...and ${failedCount - failedUsers.length} more*`;
                 }
             }
 
@@ -852,7 +886,9 @@ class LotteryBot {
         }
 
         try {
-            const config = await LotteryConfig.findOne();
+            const config = await LotteryConfig.findOne()
+                .select({ isActive: 1, claimChannel: 1, logChannel: 1, ticketCounter: 1 })
+                .lean();
             if (!config) {
                 await message.reply('Lottery has not been set up yet. Use `!setup-lottery` first.');
                 return;
@@ -862,45 +898,47 @@ class LotteryBot {
             const totalWinners = await Winner.countDocuments();
             const ticketsIssued = config.ticketCounter - 1;
 
-            // Get ALL participants
-            const allParticipants = await Participant.find().sort({ ticketNumber: 1 });
-            
             // Pagination settings
             const itemsPerPage = 15;
-            const totalPages = Math.ceil(allParticipants.length / itemsPerPage) || 1;
+            const totalPages = Math.ceil(totalParticipants / itemsPerPage) || 1;
             let currentPage = 0;
 
-            const generateEmbed = (page: number) => {
+            const generateEmbed = async (page: number) => {
                 const start = page * itemsPerPage;
                 const end = start + itemsPerPage;
-                const pageParticipants = allParticipants.slice(start, end);
+                const pageParticipants = await Participant.find()
+                    .select({ userId: 1, ticketNumber: 1, _id: 0 })
+                    .sort({ ticketNumber: 1 })
+                    .skip(start)
+                    .limit(itemsPerPage)
+                    .lean();
                 
                 const participantsList = pageParticipants.length > 0 
-                    ? pageParticipants.map((p, idx) => `\`${String(start + idx + 1).padStart(3, ' ')}\` <@${p.userId}> → Ticket **#${p.ticketNumber}**`).join('\n')
+                    ? pageParticipants.map((p, idx) => `\`${String(start + idx + 1).padStart(3, ' ')}\` <@${p.userId}> -> Ticket **#${p.ticketNumber}**`).join('\n')
                     : '*No participants yet*';
 
                 return new EmbedBuilder()
-                    .setTitle('🎟️ Lottery Dashboard')
-                    .setDescription(`**System Status:** ${config.isActive ? '🟢 **Active**' : '🔴 **Inactive**'}\n━━━━━━━━━━━━━━━━━━━━━━`)
+                    .setTitle('Lottery Dashboard')
+                    .setDescription(`**System Status:** ${config.isActive ? '**Active**' : '**Inactive**'}\n----------------------`)
                     .addFields(
                         { 
-                            name: '📊 Statistics', 
+                            name: 'Statistics', 
                             value: `\`\`\`\nTickets Issued : ${ticketsIssued}\nParticipants   : ${totalParticipants}\nWinners        : ${totalWinners}\`\`\``, 
                             inline: true 
                         },
                         { 
-                            name: '⚙️ Configuration', 
+                            name: 'Configuration', 
                             value: `\`\`\`\nClaim Channel\n\`\`\`<#${config.claimChannel}>\n\`\`\`\nLog Channel\n\`\`\`<#${config.logChannel}>`, 
                             inline: true 
                         },
                         { 
-                            name: `👥 Participants List • Page ${page + 1} of ${totalPages}`, 
+                            name: `Participants List - Page ${page + 1} of ${totalPages}`, 
                             value: participantsList, 
                             inline: false 
                         }
                     )
                     .setColor(config.isActive ? 0x57F287 : 0xED4245)
-                    .setFooter({ text: `Showing ${start + 1}-${Math.min(end, allParticipants.length)} of ${allParticipants.length} participants` })
+                    .setFooter({ text: `Showing ${Math.min(start + 1, totalParticipants)}-${Math.min(end, totalParticipants)} of ${totalParticipants} participants` })
                     .setTimestamp();
             };
 
@@ -909,12 +947,12 @@ class LotteryBot {
                     .addComponents(
                         new ButtonBuilder()
                             .setCustomId('first_page')
-                            .setLabel('⏮️ First')
+                            .setLabel('First')
                             .setStyle(ButtonStyle.Secondary)
                             .setDisabled(page === 0),
                         new ButtonBuilder()
                             .setCustomId('prev_page')
-                            .setLabel('◀️ Previous')
+                            .setLabel('Previous')
                             .setStyle(ButtonStyle.Primary)
                             .setDisabled(page === 0),
                         new ButtonBuilder()
@@ -924,12 +962,12 @@ class LotteryBot {
                             .setDisabled(true),
                         new ButtonBuilder()
                             .setCustomId('next_page')
-                            .setLabel('Next ▶️')
+                            .setLabel('Next')
                             .setStyle(ButtonStyle.Primary)
                             .setDisabled(page >= totalPages - 1),
                         new ButtonBuilder()
                             .setCustomId('last_page')
-                            .setLabel('Last ⏭️')
+                            .setLabel('Last')
                             .setStyle(ButtonStyle.Secondary)
                             .setDisabled(page >= totalPages - 1)
                     );
@@ -937,7 +975,7 @@ class LotteryBot {
             };
 
             // Send initial message
-            const messageOptions: any = { embeds: [generateEmbed(currentPage)] };
+            const messageOptions: any = { embeds: [await generateEmbed(currentPage)] };
             if (totalPages > 1) {
                 messageOptions.components = [generateButtons(currentPage)];
             }
@@ -963,7 +1001,7 @@ class LotteryBot {
                     }
 
                     await interaction.update({ 
-                        embeds: [generateEmbed(currentPage)],
+                        embeds: [await generateEmbed(currentPage)],
                         components: [generateButtons(currentPage)]
                     });
                 });

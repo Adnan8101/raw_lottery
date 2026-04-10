@@ -12,16 +12,20 @@ if (fs.existsSync(fontsDir)) {
 
 export class TicketGenerator {
     private templatePath: string;
+    private templateImage: any | null = null;
 
     constructor() {
-        const preferredTemplatePath = path.join(__dirname, '..', 'Blue Modern Music Concert Ticket-2.png');
-        const legacyTemplatePath = path.join(__dirname, '..', 'Blue Modern Music Concert Ticket.png');
+        const preferredTemplatePath = path.join(__dirname, '..', 'Grey_Black_Purple_Minimalist_Music_Night_Event_Ticket_20260410_195437_0000.png');
+        const legacyTemplatePath = path.join(__dirname, '..', 'Blue Modern Music Concert Ticket-2.png');
+        const olderLegacyTemplatePath = path.join(__dirname, '..', 'Blue Modern Music Concert Ticket.png');
         const fallbackTemplatePath = path.join(__dirname, '..', 'assets', 'Black Minimalist Music Festival Ticket.png');
 
         if (fs.existsSync(preferredTemplatePath)) {
             this.templatePath = preferredTemplatePath;
         } else if (fs.existsSync(legacyTemplatePath)) {
             this.templatePath = legacyTemplatePath;
+        } else if (fs.existsSync(olderLegacyTemplatePath)) {
+            this.templatePath = olderLegacyTemplatePath;
         } else {
             this.templatePath = fallbackTemplatePath;
         }
@@ -37,10 +41,10 @@ export class TicketGenerator {
         try {
             // Load the template
             if (!fs.existsSync(this.templatePath)) {
-                throw new Error('Template not found. Please ensure Blue Modern Music Concert Ticket-2.png exists in the project root.');
+                throw new Error('Template not found. Please ensure a ticket template PNG exists in the project root.');
             }
 
-            const template = await loadImage(this.templatePath);
+            const template = await this.getTemplateImage();
             const canvas = createCanvas(template.width, template.height);
             const ctx = canvas.getContext('2d');
 
@@ -50,50 +54,31 @@ export class TicketGenerator {
             const width = template.width;
             const height = template.height;
 
-            const rightStripLeftX = Math.round(width * 0.847);
-            const rightStripWidth = width - rightStripLeftX;
+            const profilePanel = this.getRightProfilePanel(width, height);
 
-            const pfpRadius = Math.max(64, Math.round(height * 0.092));
-            const pfpCenterX = Math.round(rightStripLeftX + rightStripWidth * 0.5);
-            const pfpCenterY = Math.round(height * 0.19);
+            const pfpRadius = Math.max(72, Math.round(Math.min(profilePanel.width * 0.27, profilePanel.height * 0.18)));
+            const pfpCenterX = Math.round(profilePanel.left + profilePanel.width * 0.5);
+            const pfpCenterY = Math.round(profilePanel.top + pfpRadius + profilePanel.height * 0.06);
 
             const initials = (username.trim().charAt(0) || 'U').toUpperCase();
 
             const avatarImage = await this.loadAvatarImage(avatarUrl);
             this.drawCircularAvatar(ctx, avatarImage, pfpCenterX, pfpCenterY, pfpRadius, initials);
 
+            const usernameY = pfpCenterY + pfpRadius + Math.round(profilePanel.height * 0.11);
+
             this.drawFittedUsername(
                 ctx,
                 username,
                 pfpCenterX,
-                pfpCenterY + pfpRadius + 114,
-                pfpRadius * 3
+                usernameY,
+                Math.round(profilePanel.width * 0.82)
             );
 
-            const ticketFrameHeight = Math.round(height * 0.165);
-            const ticketFrameTop = height - ticketFrameHeight - Math.round(height * 0.045);
-            const usernameY = pfpCenterY + pfpRadius + 114;
-            const pricePanelWidth = Math.round(rightStripWidth * 0.9);
-            const pricePanelHeight = Math.round(height * 0.09);
-            const pricePanelLeft = pfpCenterX - Math.round(pricePanelWidth / 2);
-            const minPricePanelTop = usernameY + Math.round(height * 0.045);
-            const preferredPricePanelTop = ticketFrameTop - pricePanelHeight - Math.round(height * 0.07);
-            const pricePanelTop = Math.max(minPricePanelTop, preferredPricePanelTop);
-
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-            ctx.fillRect(pricePanelLeft, pricePanelTop, pricePanelWidth, pricePanelHeight);
-            ctx.strokeStyle = '#06172d';
-            ctx.lineWidth = Math.max(4, Math.round(width * 0.0019));
-            ctx.strokeRect(pricePanelLeft, pricePanelTop, pricePanelWidth, pricePanelHeight);
-
-            ctx.fillStyle = '#06172d';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.font = '800 38px "Montserrat Bold"';
-            ctx.fillText('PRICE POOL : ₹1000', pfpCenterX, pricePanelTop + Math.round(pricePanelHeight * 0.52));
+            const separatorY = this.drawUsernameSeparator(ctx, profilePanel, usernameY);
 
             const ticketText = ticketNumber.toString().padStart(4, '0');
-            this.drawBottomRightTicketFrame(ctx, width, height, rightStripLeftX, ticketText);
+            this.drawTicketNumberPanel(ctx, profilePanel, ticketText, separatorY);
 
             // Return buffer directly (no file saved)
             return canvas.toBuffer('image/png');
@@ -103,39 +88,95 @@ export class TicketGenerator {
         }
     }
 
-    private drawBottomRightTicketFrame(
-        ctx: any,
+    private getRightProfilePanel(
         width: number,
-        height: number,
-        rightStripLeftX: number,
-        ticketText: string
+        height: number
+    ): { left: number; top: number; width: number; height: number } {
+        // Coordinates tuned to the current music-night template right rounded rectangle.
+        const left = Math.round(width * 0.822);
+        const top = Math.round(height * 0.145);
+        const panelWidth = Math.round(width * 0.148);
+        const panelHeight = Math.round(height * 0.75);
+
+        return {
+            left,
+            top,
+            width: panelWidth,
+            height: panelHeight
+        };
+    }
+
+    private async getTemplateImage(): Promise<any> {
+        if (!this.templateImage) {
+            this.templateImage = await loadImage(this.templatePath);
+        }
+
+        return this.templateImage;
+    }
+
+    private drawTicketNumberPanel(
+        ctx: any,
+        panel: { left: number; top: number; width: number; height: number },
+        ticketText: string,
+        separatorY: number
     ): void {
-        const rightStripWidth = width - rightStripLeftX;
-        const frameWidth = Math.round(rightStripWidth * 0.9);
-        const frameHeight = Math.round(height * 0.165);
-        const frameLeft = rightStripLeftX + Math.round((rightStripWidth - frameWidth) / 2);
-        const frameTop = height - frameHeight - Math.round(height * 0.045);
-        const frameRight = frameLeft + frameWidth;
-        const frameBottom = frameTop + frameHeight;
+        const numberBoxWidth = Math.round(panel.width * 0.80);
+        const numberBoxHeight = Math.round(panel.height * 0.095);
+        const numberBoxLeft = panel.left + Math.round((panel.width - numberBoxWidth) / 2);
+        const baseBoxTop = Math.round(separatorY + panel.height * 0.045);
+        const maxBottom = panel.top + panel.height - Math.round(panel.height * 0.05);
+        const overflow = Math.max(0, baseBoxTop + numberBoxHeight - maxBottom);
+        const numberBoxTop = baseBoxTop - overflow;
+        const centerX = numberBoxLeft + Math.round(numberBoxWidth * 0.5);
+        const centerY = numberBoxTop + Math.round(numberBoxHeight * 0.54);
+        const ticketLabel = `Ticket : #${ticketText}`;
+
+        let fontSize = 24;
+        const minFontSize = 16;
 
         ctx.save();
-        ctx.strokeStyle = '#06172d';
-        ctx.lineWidth = Math.max(5, Math.round(width * 0.0023));
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.38)';
-        ctx.fillRect(frameLeft, frameTop, frameRight - frameLeft, frameBottom - frameTop);
-        ctx.strokeRect(frameLeft, frameTop, frameRight - frameLeft, frameBottom - frameTop);
-
-        ctx.fillStyle = '#06172d';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.25)';
-        ctx.shadowBlur = Math.max(4, Math.round(width * 0.003));
-        ctx.font = '800 34px "Montserrat Bold"';
-        ctx.fillText('TICKET NUMBER :', frameLeft + Math.round(frameWidth * 0.5), frameTop + Math.round(frameHeight * 0.34));
 
-        ctx.font = '900 76px "Montserrat Bold"';
-        ctx.fillText(ticketText, frameLeft + Math.round(frameWidth * 0.5), frameTop + Math.round(frameHeight * 0.77));
+        const textFits = (size: number): boolean => {
+            ctx.font = `700 ${size}px "Montserrat SemiBold"`;
+            return ctx.measureText(ticketLabel).width <= numberBoxWidth * 0.88;
+        };
+
+        while (!textFits(fontSize) && fontSize > minFontSize) {
+            fontSize -= 1;
+        }
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.74)';
+        ctx.strokeStyle = 'rgba(17, 24, 39, 0.45)';
+        ctx.lineWidth = 2;
+        ctx.fillRect(numberBoxLeft, numberBoxTop, numberBoxWidth, numberBoxHeight);
+        ctx.strokeRect(numberBoxLeft, numberBoxTop, numberBoxWidth, numberBoxHeight);
+
+        ctx.fillStyle = '#14161a';
+        ctx.font = `700 ${fontSize}px "Montserrat SemiBold"`;
+        ctx.fillText(ticketLabel, centerX, centerY);
         ctx.restore();
+    }
+
+    private drawUsernameSeparator(
+        ctx: any,
+        panel: { left: number; top: number; width: number; height: number },
+        usernameY: number
+    ): number {
+        const separatorY = Math.round(usernameY + panel.height * 0.035);
+        const centerX = panel.left + Math.round(panel.width * 0.5);
+
+        ctx.save();
+        ctx.strokeStyle = 'rgba(32, 34, 37, 0.18)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(centerX - Math.round(panel.width * 0.24), separatorY);
+        ctx.lineTo(centerX + Math.round(panel.width * 0.24), separatorY);
+        ctx.stroke();
+        ctx.restore();
+
+        return separatorY;
     }
 
     private async loadAvatarImage(avatarUrl: string): Promise<any | null> {
@@ -191,8 +232,8 @@ export class TicketGenerator {
 
         ctx.restore();
 
-        ctx.strokeStyle = '#3bb4ff';
-        ctx.lineWidth = Math.max(5, Math.round(radius * 0.1));
+        ctx.strokeStyle = '#1f2937';
+        ctx.lineWidth = Math.max(4, Math.round(radius * 0.075));
         ctx.beginPath();
         ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
         ctx.stroke();
@@ -209,12 +250,12 @@ export class TicketGenerator {
 
         let usernameCore = rawUsername;
         let displayUsername = usernameCore;
-        let usernameSize = 40;
+        let usernameSize = 38;
 
-        const minUsernameSize = 22;
+        const minUsernameSize = 24;
 
         const measureWidth = (nameText: string): number => {
-            ctx.font = `800 ${usernameSize}px "Montserrat Bold"`;
+            ctx.font = `700 ${usernameSize}px "Montserrat SemiBold"`;
             return ctx.measureText(nameText).width;
         };
 
@@ -236,8 +277,8 @@ export class TicketGenerator {
         ctx.textAlign = 'left';
         ctx.textBaseline = 'alphabetic';
 
-        ctx.fillStyle = '#000000';
-        ctx.font = `800 ${usernameSize}px "Montserrat Bold"`;
+        ctx.fillStyle = '#111827';
+        ctx.font = `700 ${usernameSize}px "Montserrat SemiBold"`;
         ctx.fillText(displayUsername, startX, baselineY);
     }
 
