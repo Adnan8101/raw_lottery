@@ -10,7 +10,9 @@
     "watch": "tsc --watch",
     "create-template": "ts-node src/createTemplate.ts",
     "analyze-ticket": "ts-node analyze_ticket_layout.ts",
-    "test-ticket": "ts-node test_ticket.ts"
+    "test-ticket": "ts-node test_ticket.ts",
+    "audit-lottery-data": "ts-node src/repairLotteryData.ts --guild 1052886751221383198",
+    "fix-lottery-data": "ts-node src/repairLotteryData.ts --guild 1052886751221383198 --fix"
   },
   "keywords": ["discord", "bot", "lottery"],
   "author": "",

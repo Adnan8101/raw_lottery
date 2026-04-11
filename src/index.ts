@@ -75,6 +75,35 @@ class LotteryBot {
         return await LotteryConfig.findOne().lean();
     }
 
+    private async getNextAvailableTicketNumber(): Promise<number> {
+        const tickets = await Participant.find()
+            .select({ ticketNumber: 1, _id: 0 })
+            .sort({ ticketNumber: 1 })
+            .lean<Array<{ ticketNumber: number }>>();
+
+        let expected = 1;
+        for (const ticket of tickets) {
+            if (ticket.ticketNumber < expected) {
+                continue;
+            }
+
+            if (ticket.ticketNumber === expected) {
+                expected += 1;
+                continue;
+            }
+
+            break;
+        }
+
+        return expected;
+    }
+
+    private async syncTicketCounterToNextAvailable(): Promise<number> {
+        const nextTicketNumber = await this.getNextAvailableTicketNumber();
+        await LotteryConfig.updateOne({}, { ticketCounter: nextTicketNumber });
+        return nextTicketNumber;
+    }
+
     private isAdmin(message: Message): boolean {
         if (message.author.id === this.ownerUserId) {
             return true;
@@ -404,21 +433,8 @@ class LotteryBot {
                 return;
             }
 
-            // Atomically reserve a unique ticket number.
-            const counterDoc = await LotteryConfig.findOneAndUpdate(
-                {},
-                { $inc: { ticketCounter: 1 } },
-                {
-                    new: false,
-                    projection: { ticketCounter: 1 }
-                }
-            ).lean();
-            if (!counterDoc) {
-                await message.reply('Lottery is not configured.');
-                return;
-            }
-
-            const ticketNumber = counterDoc.ticketCounter;
+            // Always assign the smallest available ticket number to avoid gaps.
+            const ticketNumber = await this.getNextAvailableTicketNumber();
             const avatarUrl = message.author.displayAvatarURL({ extension: 'png', size: 256 });
             const claimedAt = new Date();
 
@@ -455,6 +471,8 @@ class LotteryBot {
                 return;
             }
 
+            await LotteryConfig.updateOne({}, { ticketCounter: ticketNumber + 1 });
+
             // Send ticket to user's DM (plain image + text, no embed)
             const dmAttachment = new AttachmentBuilder(ticketBuffer, { name: 'ticket.png' });
             const dateStr = claimedAt.toLocaleDateString('en-US', {
@@ -474,6 +492,7 @@ class LotteryBot {
             } catch (dmError) {
                 // Release user claim entry if DM cannot be delivered.
                 await Participant.deleteOne({ userId: message.author.id, ticketNumber });
+                await this.syncTicketCounterToNextAvailable();
                 await this.notifyDmDisabled(message);
                 return;
             }
@@ -799,7 +818,7 @@ class LotteryBot {
                 return;
             }
 
-            let nextTicketNumber = config.ticketCounter;
+            let nextTicketNumber = await this.getNextAvailableTicketNumber();
 
             // Find ALL tickets and group by ticket NUMBER (not userId)
             const allTickets = await Participant.find()
@@ -887,9 +906,7 @@ class LotteryBot {
                 }
             }
 
-            if (totalDuplicatesFixed > 0) {
-                await LotteryConfig.updateOne({}, { ticketCounter: nextTicketNumber });
-            }
+            await this.syncTicketCounterToNextAvailable();
 
             if (totalDuplicatesFixed === 0) {
                 await message.reply('No duplicate tickets found. All tickets are unique.');
@@ -991,7 +1008,7 @@ class LotteryBot {
 
             const totalParticipants = await Participant.countDocuments();
             const totalWinners = await Winner.countDocuments();
-            const ticketsIssued = config.ticketCounter - 1;
+            const ticketsIssued = totalParticipants;
 
             // Pagination settings
             const itemsPerPage = 15;
