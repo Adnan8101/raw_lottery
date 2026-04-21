@@ -15,12 +15,15 @@ export class TicketGenerator {
     private templateImage: any | null = null;
 
     constructor() {
+        const brownTemplatePath = path.join(__dirname, '..', 'Brown_Modern_Midnight_Party_Ticket_20260420_204013_0000.png');
         const preferredTemplatePath = path.join(__dirname, '..', 'Grey_Black_Purple_Minimalist_Music_Night_Event_Ticket_20260410_195437_0000.png');
         const legacyTemplatePath = path.join(__dirname, '..', 'Blue Modern Music Concert Ticket-2.png');
         const olderLegacyTemplatePath = path.join(__dirname, '..', 'Blue Modern Music Concert Ticket.png');
         const fallbackTemplatePath = path.join(__dirname, '..', 'assets', 'Black Minimalist Music Festival Ticket.png');
 
-        if (fs.existsSync(preferredTemplatePath)) {
+        if (fs.existsSync(brownTemplatePath)) {
+            this.templatePath = brownTemplatePath;
+        } else if (fs.existsSync(preferredTemplatePath)) {
             this.templatePath = preferredTemplatePath;
         } else if (fs.existsSync(legacyTemplatePath)) {
             this.templatePath = legacyTemplatePath;
@@ -36,7 +39,7 @@ export class TicketGenerator {
         username: string,
         avatarUrl: string,
         ticketNumber: number,
-        _options: { serverName?: string; claimedAt?: Date; displayName?: string } = {}
+        options: { serverName?: string; claimedAt?: Date; displayName?: string } = {}
     ): Promise<Buffer> {
         try {
             // Load the template
@@ -56,20 +59,22 @@ export class TicketGenerator {
 
             const profilePanel = this.getRightProfilePanel(width, height);
 
-            const pfpRadius = Math.max(72, Math.round(Math.min(profilePanel.width * 0.27, profilePanel.height * 0.18)));
+            const pfpRadius = Math.max(52, Math.round(Math.min(profilePanel.width * 0.23, profilePanel.height * 0.18)));
             const pfpCenterX = Math.round(profilePanel.left + profilePanel.width * 0.5);
-            const pfpCenterY = Math.round(profilePanel.top + pfpRadius + profilePanel.height * 0.06);
+            const pfpCenterY = Math.round(profilePanel.top + pfpRadius + profilePanel.height * 0.08);
+            const displayName = options.displayName?.trim() || username;
+            const claimedAt = options.claimedAt ?? new Date();
 
             const initials = (username.trim().charAt(0) || 'U').toUpperCase();
 
             const avatarImage = await this.loadAvatarImage(avatarUrl);
             this.drawCircularAvatar(ctx, avatarImage, pfpCenterX, pfpCenterY, pfpRadius, initials);
 
-            const usernameY = pfpCenterY + pfpRadius + Math.round(profilePanel.height * 0.11);
+            const usernameY = pfpCenterY + pfpRadius + Math.round(profilePanel.height * 0.10);
 
             this.drawFittedUsername(
                 ctx,
-                username,
+                displayName,
                 pfpCenterX,
                 usernameY,
                 Math.round(profilePanel.width * 0.82)
@@ -78,7 +83,13 @@ export class TicketGenerator {
             const separatorY = this.drawUsernameSeparator(ctx, profilePanel, usernameY);
 
             const ticketText = ticketNumber.toString().padStart(4, '0');
-            this.drawTicketNumberPanel(ctx, profilePanel, ticketText, separatorY);
+            const ticketPanelBottomY = this.drawTicketNumberPanel(ctx, profilePanel, ticketText, separatorY);
+            this.drawTicketMeta(
+                ctx,
+                profilePanel,
+                ticketPanelBottomY,
+                claimedAt
+            );
 
             // Return buffer directly (no file saved)
             return canvas.toBuffer('image/png');
@@ -92,7 +103,17 @@ export class TicketGenerator {
         width: number,
         height: number
     ): { left: number; top: number; width: number; height: number } {
-        // Coordinates tuned to the current music-night template right rounded rectangle.
+        if (path.basename(this.templatePath).includes('Brown_Modern_Midnight_Party_Ticket')) {
+            // Based on measured divider near X=1586 for a 2000x647 canvas.
+            return {
+                left: Math.round(width * 0.803),
+                top: Math.round(height * 0.077),
+                width: Math.round(width * 0.172),
+                height: Math.round(height * 0.845)
+            };
+        }
+
+        // Fallback coordinates for legacy templates.
         const left = Math.round(width * 0.822);
         const top = Math.round(height * 0.145);
         const panelWidth = Math.round(width * 0.148);
@@ -119,9 +140,9 @@ export class TicketGenerator {
         panel: { left: number; top: number; width: number; height: number },
         ticketText: string,
         separatorY: number
-    ): void {
+    ): number {
         const numberBoxWidth = Math.round(panel.width * 0.80);
-        const numberBoxHeight = Math.round(panel.height * 0.095);
+        const numberBoxHeight = Math.round(panel.height * 0.11);
         const numberBoxLeft = panel.left + Math.round((panel.width - numberBoxWidth) / 2);
         const baseBoxTop = Math.round(separatorY + panel.height * 0.045);
         const maxBottom = panel.top + panel.height - Math.round(panel.height * 0.05);
@@ -147,16 +168,18 @@ export class TicketGenerator {
             fontSize -= 1;
         }
 
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.74)';
-        ctx.strokeStyle = 'rgba(17, 24, 39, 0.45)';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.38)';
         ctx.lineWidth = 2;
         ctx.fillRect(numberBoxLeft, numberBoxTop, numberBoxWidth, numberBoxHeight);
         ctx.strokeRect(numberBoxLeft, numberBoxTop, numberBoxWidth, numberBoxHeight);
 
-        ctx.fillStyle = '#14161a';
+        ctx.fillStyle = '#f9fafb';
         ctx.font = `700 ${fontSize}px "Montserrat SemiBold"`;
         ctx.fillText(ticketLabel, centerX, centerY);
         ctx.restore();
+
+        return numberBoxTop + numberBoxHeight;
     }
 
     private drawUsernameSeparator(
@@ -168,7 +191,7 @@ export class TicketGenerator {
         const centerX = panel.left + Math.round(panel.width * 0.5);
 
         ctx.save();
-        ctx.strokeStyle = 'rgba(32, 34, 37, 0.18)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.24)';
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(centerX - Math.round(panel.width * 0.24), separatorY);
@@ -232,7 +255,7 @@ export class TicketGenerator {
 
         ctx.restore();
 
-        ctx.strokeStyle = '#1f2937';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
         ctx.lineWidth = Math.max(4, Math.round(radius * 0.075));
         ctx.beginPath();
         ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
@@ -277,9 +300,55 @@ export class TicketGenerator {
         ctx.textAlign = 'left';
         ctx.textBaseline = 'alphabetic';
 
-        ctx.fillStyle = '#111827';
+        ctx.fillStyle = '#ffffff';
         ctx.font = `700 ${usernameSize}px "Montserrat SemiBold"`;
         ctx.fillText(displayUsername, startX, baselineY);
+    }
+
+    private drawTicketMeta(
+        ctx: any,
+        panel: { left: number; top: number; width: number; height: number },
+        startY: number,
+        claimedAt?: Date
+    ): void {
+        const claimedText = `Claimed: ${this.formatClaimedAt(claimedAt ?? new Date())}`;
+        const top = startY + Math.round(panel.height * 0.06);
+        const centerX = panel.left + Math.round(panel.width * 0.5);
+        const maxWidth = Math.round(panel.width * 0.86);
+
+        let fontSize = 16;
+        const minFontSize = 12;
+
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+
+        const fits = (): boolean => {
+            ctx.font = `500 ${fontSize}px "Montserrat Medium"`;
+            return ctx.measureText(claimedText).width <= maxWidth;
+        };
+
+        while (!fits() && fontSize > minFontSize) {
+            fontSize -= 1;
+        }
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.62)';
+        ctx.font = `500 ${fontSize}px "Montserrat Medium"`;
+        ctx.fillText(claimedText, centerX, top);
+        ctx.restore();
+    }
+
+    private formatClaimedAt(value: Date): string {
+        const datePart = value.toLocaleDateString('en-GB', {
+            day: '2-digit',
+            month: 'short'
+        });
+        const timePart = value.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+        });
+        return `${datePart} ${timePart}`;
     }
 
 }

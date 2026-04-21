@@ -4,79 +4,27 @@ import { createCanvas, loadImage } from '@napi-rs/canvas';
 import fs from 'fs';
 import path from 'path';
 
-type Pixel = { r: number; g: number; b: number; a: number };
+type RGB = { r: number; g: number; b: number };
 
-function brightness(p: Pixel): number {
+function getPixel(ctx: any, x: number, y: number): RGB {
+    const d = ctx.getImageData(x, y, 1, 1).data;
+    return { r: d[0], g: d[1], b: d[2] };
+}
+
+function brightness(p: RGB): number {
     return (p.r + p.g + p.b) / 3;
 }
 
-function getPixel(ctx: any, x: number, y: number): Pixel {
-    const d = ctx.getImageData(x, y, 1, 1).data;
-    return { r: d[0], g: d[1], b: d[2], a: d[3] };
-}
-
-function colorDiff(a: Pixel, b: Pixel): number {
-    return Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b);
-}
-
-function strongestDarkColumn(ctx: any, height: number, fromX: number, toX: number): { x: number; score: number } {
-    let bestX = fromX;
-    let bestScore = -1;
-
-    for (let x = fromX; x <= toX; x++) {
-        let darkCount = 0;
-        for (let y = 0; y < height; y += 2) {
-            const p = getPixel(ctx, x, y);
-            if (brightness(p) < 35) {
-                darkCount++;
-            }
-        }
-
-        if (darkCount > bestScore) {
-            bestScore = darkCount;
-            bestX = x;
-        }
-    }
-
-    return { x: bestX, score: bestScore };
-}
-
-function nonBgBounds(
-    ctx: any,
-    width: number,
-    height: number,
-    bg: Pixel,
-    fromX: number,
-    toX: number,
-    threshold: number
-): { minX: number; maxX: number; minY: number; maxY: number; count: number } {
-    let minX = width;
-    let maxX = -1;
-    let minY = height;
-    let maxY = -1;
-    let count = 0;
-
-    for (let y = 0; y < height; y++) {
-        for (let x = fromX; x <= toX; x++) {
-            const p = getPixel(ctx, x, y);
-            if (colorDiff(p, bg) > threshold) {
-                count++;
-                if (x < minX) minX = x;
-                if (x > maxX) maxX = x;
-                if (y < minY) minY = y;
-                if (y > maxY) maxY = y;
-            }
-        }
-    }
-
-    return { minX, maxX, minY, maxY, count };
+function clamp(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value));
 }
 
 async function analyzeTicketLayout() {
-    const templatePath = path.join(__dirname, 'Blue Modern Music Concert Ticket.png');
+    const templateName = 'Brown_Modern_Midnight_Party_Ticket_20260420_204013_0000.png';
+    const templatePath = path.join(__dirname, templateName);
 
     if (!fs.existsSync(templatePath)) {
-        throw new Error(`Template not found at ${templatePath}`);
+        throw new Error(`Template not found: ${templatePath}`);
     }
 
     const img = await loadImage(fs.readFileSync(templatePath));
@@ -87,36 +35,71 @@ async function analyzeTicketLayout() {
     const width = img.width;
     const height = img.height;
 
-    const leftDivider = strongestDarkColumn(ctx, height, 0, Math.floor(width * 0.45));
-    const rightSectionStart = strongestDarkColumn(ctx, height, Math.floor(width * 0.75), Math.floor(width * 0.9));
-    const ticketLabelRail = strongestDarkColumn(ctx, height, Math.floor(width * 0.9), width - 1);
+    // Divider detection: strongest brightness drop in the right half.
+    let dividerX = Math.floor(width * 0.79);
+    let bestDrop = -1;
 
-    const rightBg = getPixel(ctx, width - 30, 30);
-    const rightStripBounds = nonBgBounds(ctx, width, height, rightBg, rightSectionStart.x, width - 1, 70);
+    for (let x = Math.floor(width * 0.70); x < Math.floor(width * 0.88); x++) {
+        let currentAvg = 0;
+        let nextAvg = 0;
+        let rows = 0;
 
-    console.log('=== IMAGE METRICS ===');
-    console.log(`Template: ${templatePath}`);
-    console.log(`Dimensions: ${width}x${height}`);
+        for (let y = 0; y < height; y += 2) {
+            currentAvg += brightness(getPixel(ctx, x, y));
+            nextAvg += brightness(getPixel(ctx, clamp(x + 1, 0, width - 1), y));
+            rows += 1;
+        }
 
-    console.log('\n=== STRUCTURE DETECTION ===');
-    console.log(`Left divider strongest dark column: X=${leftDivider.x} (score=${leftDivider.score})`);
-    console.log(`Right section start strongest dark column: X=${rightSectionStart.x} (score=${rightSectionStart.score})`);
-    console.log(`Ticket label rail strongest dark column: X=${ticketLabelRail.x} (score=${ticketLabelRail.score})`);
+        currentAvg /= rows;
+        nextAvg /= rows;
 
-    console.log('\n=== RIGHT STRIP CONTENT ===');
-    console.log(`Right strip non-background bounds: X=${rightStripBounds.minX}-${rightStripBounds.maxX}, Y=${rightStripBounds.minY}-${rightStripBounds.maxY}`);
-    console.log(`Detected non-bg pixels in right strip: ${rightStripBounds.count}`);
+        const drop = currentAvg - nextAvg;
+        if (drop > bestDrop) {
+            bestDrop = drop;
+            dividerX = x;
+        }
+    }
 
-    const suggestedLeftCenterX = Math.round(leftDivider.x * 0.5);
-    const suggestedTicketValueX = Math.min(width - 42, ticketLabelRail.x + 72);
-    const suggestedTicketValueY = Math.round(height * 0.71);
+    const panel = {
+        left: clamp(dividerX + 20, 0, width - 1),
+        top: Math.round(height * 0.077),
+        width: Math.round(width * 0.172),
+        height: Math.round(height * 0.845)
+    };
 
-    console.log('\n=== SUGGESTED DRAW ANCHORS ===');
-    console.log(`Left section center X: ${suggestedLeftCenterX}`);
-    console.log(`Server icon Y: ${Math.round(height * 0.14)}`);
-    console.log(`User icon Y: ${Math.round(height * 0.50)}`);
-    console.log(`Claimed text Y: ${Math.round(height * 0.76)}-${Math.round(height * 0.82)}`);
-    console.log(`Ticket number (vertical) anchor: X=${suggestedTicketValueX}, Y=${suggestedTicketValueY}`);
+    const pfpRadius = Math.max(52, Math.round(Math.min(panel.width * 0.23, panel.height * 0.18)));
+    const pfpCenterX = Math.round(panel.left + panel.width * 0.5);
+    const pfpCenterY = Math.round(panel.top + pfpRadius + panel.height * 0.08);
+
+    const usernameY = pfpCenterY + pfpRadius + Math.round(panel.height * 0.10);
+    const separatorY = Math.round(usernameY + panel.height * 0.035);
+
+    const ticketBox = {
+        width: Math.round(panel.width * 0.80),
+        height: Math.round(panel.height * 0.11)
+    };
+    ticketBox.width = clamp(ticketBox.width, 0, panel.width);
+    ticketBox.height = clamp(ticketBox.height, 0, panel.height);
+
+    const ticketBoxLeft = panel.left + Math.round((panel.width - ticketBox.width) / 2);
+    const ticketBoxTop = Math.round(separatorY + panel.height * 0.045);
+
+    const metaStartY = ticketBoxTop + ticketBox.height + Math.round(panel.height * 0.045);
+
+    console.log('=== BROWN TICKET LAYOUT ANALYSIS ===');
+    console.log(`Template: ${templateName}`);
+    console.log(`Size: ${width} x ${height}`);
+    console.log('');
+    console.log('Detected structure:');
+    console.log(`- Divider X: ${dividerX}`);
+    console.log(`- Right panel: left=${panel.left}, top=${panel.top}, width=${panel.width}, height=${panel.height}`);
+    console.log('');
+    console.log('Suggested anchors:');
+    console.log(`- PFP center: x=${pfpCenterX}, y=${pfpCenterY}, radius=${pfpRadius}`);
+    console.log(`- Username baseline y=${usernameY}`);
+    console.log(`- Separator y=${separatorY}`);
+    console.log(`- Ticket box: left=${ticketBoxLeft}, top=${ticketBoxTop}, width=${ticketBox.width}, height=${ticketBox.height}`);
+    console.log(`- Meta text start y=${metaStartY}`);
 }
 
 analyzeTicketLayout().catch((error) => {

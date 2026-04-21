@@ -14,14 +14,18 @@
     "audit-lottery-data": "ts-node src/repairLotteryData.ts --guild 1052886751221383198",
     "fix-lottery-data": "ts-node src/repairLotteryData.ts --guild 1052886751221383198 --fix"
   },
-  "keywords": ["discord", "bot", "lottery"],
+  "keywords": [
+    "discord",
+    "bot",
+    "lottery"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.99",
+    "axios": "^1.7.9",
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.5",
-    "@napi-rs/canvas": "^0.1.56",
-    "axios": "^1.7.9",
     "mongoose": "^8.8.4"
   },
   "devDependencies": {
